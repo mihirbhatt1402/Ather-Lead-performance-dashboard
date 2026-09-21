@@ -1,0 +1,34 @@
+# Ather LDR Dashboard — Daily Data Refresh Audit
+#
+# Architecture note:
+# The dashboard fetches Ather Lead Masters and Retail Master directly
+# from Google Sheets in the browser (AUTO_SYNC_ON_LOAD=true).
+# No server-side data pipeline is required — every page load at 09:30 IST
+# (04:00 UTC) automatically reads the latest sheet data.
+#
+# This workflow runs a lightweight availability check at 04:00 UTC daily
+# to confirm the GitHub Pages deployment is reachable and returns HTTP 200.
+# It does NOT modify any data or dashboard files.
+
+name: Daily Dashboard Availability Check
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # 04:00 UTC = 09:30 IST
+  workflow_dispatch:       # allow manual trigger
+
+jobs:
+  check-availability:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check dashboard URL
+        run: |
+          URL="https://mihirbhatt1402.github.io/Ather-Lead-performance-dashboard/ATHER_LDR/ATHER_LDR_Dashboard_v1.0.html"
+          echo "Checking: $URL"
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" "$URL")
+          echo "HTTP status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "ERROR: Dashboard returned HTTP $STATUS"
+            exit 1
+          fi
+          echo "OK: Dashboard is reachable"
