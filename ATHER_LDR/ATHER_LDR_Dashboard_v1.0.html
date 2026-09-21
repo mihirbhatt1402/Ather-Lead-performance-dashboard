@@ -801,7 +801,7 @@ function parseAtherNonScopeRetailRows(raw, joinedRows) {
   return rows;
 }
 
-function HeroDiagnostics({d}){
+function AtherDiagnostics({d}){
   if(!d)return null;
   const fmtD=v=>v instanceof Date&&!isNaN(v)?formatRetailDate(v):'—';
   const items=[
@@ -882,11 +882,10 @@ function buildPayload(joinedRows){
   // normMdl: normalise model name for SAME vs CROSS comparison
   function normMdl(s){return(s||'').toLowerCase().replace(/^ather\s+/,'').replace(/[^a-z0-9]+/g,' ').trim();}
   // Purchased-model equivalences: these retailed models count as SAME as the mapped canonical norm
-  const RE_SAME_MDL_EQUIV = {
-    'splendor plus xtec': 'super splendor xtec',
-    'xpulse 200 4v':      'xpulse 210',
-  };
-  function normForSame(n){ return RE_SAME_MDL_EQUIV[n] || n; }
+  // Ather model equivalences for SAME vs CROSS comparison in Retail Dispersion.
+  // Add entries here when an Ather enquiry model and purchased model are the same bike.
+  const ATHER_SAME_MDL_EQUIV = {};
+  function normForSame(n){ return ATHER_SAME_MDL_EQUIV[n] || n; }
   // canonPurMdl is defined at module scope — usable here and in tab components
 
   // a4: accumulate [L, R_all, R_dms, R_co]
@@ -3534,7 +3533,7 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
       // [ATHER QA] full pipeline trace
       const ld=leadResult.diagnostics,rd=retailResult.diagnostics;
       console.group('[ATHER QA] Ather LDR — cutoff: 01-May-2026');
-      console.log('[ATHER QA] DATA CUTOFF: 03-Aug-2026');
+      console.log('[ATHER QA] DATA CUTOFF: 01-May-2026');
       console.log('');
       console.log('[ATHER QA] ── LEAD MASTER ──');
       console.log('[ATHER QA] Lead raw:',ld.totalRows);
@@ -3566,8 +3565,8 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
       console.log('[ATHER QA] Retail earliest included:',diag.retailEarliestDate?formatRetailDate(diag.retailEarliestDate):'—');
       console.log('[ATHER QA] Retail latest included:',diag.retailLatestDate?formatRetailDate(diag.retailLatestDate):'—');
       if(rd.rawDateSamples&&rd.rawDateSamples.length)
-        rd.rawDateSamples.forEach(x=>console.log('[ATHER QA] Retail date sample (Hero rows): raw="'+x.raw+'" → '+(x.parsed||'UNPARSEABLE')));
-      else console.log('[ATHER QA] Retail date samples (Hero rows): (none)');
+        rd.rawDateSamples.forEach(x=>console.log('[ATHER QA] Retail date sample (Ather rows): raw="'+x.raw+'" → '+(x.parsed||'UNPARSEABLE')));
+      else console.log('[ATHER QA] Retail date samples (Ather rows): (none)');
       if(rd.sampleRetailDateValues&&rd.sampleRetailDateValues.length)
         rd.sampleRetailDateValues.forEach(x=>console.log('[ATHER QA] Retail date sample (ALL rows): raw="'+x.raw+'" → '+(x.parsed||'UNPARSEABLE')));
       console.log('');
@@ -3580,7 +3579,7 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
       if(diag.keyMatchSamples&&diag.keyMatchSamples.length)
         diag.keyMatchSamples.forEach(s=>console.log('[ATHER QA] MATCH SAMPLE retail key="'+s.retailKey+'" → inLeads='+s.inLeads));
       if(rd.rawKeySamples&&rd.rawKeySamples.length)
-        console.log('[ATHER QA] Retail key samples (Hero rows):',rd.rawKeySamples);
+        console.log('[ATHER QA] Retail key samples (Ather rows):',rd.rawKeySamples);
       console.log('');
       console.log('[ATHER QA] ── RESULTS ──');
       const rAll=joined.filter(r=>r.isBooked).length;
@@ -3591,9 +3590,9 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
       console.log('[ATHER QA] Retail Till Date:',retailResult.maxRetailDate?formatRetailDate(retailResult.maxRetailDate):'— (no valid retail dates found)');
       console.log('[ATHER QA] Booked with both dates (bdm eligible):',joined.filter(r=>r.isBooked&&r.leadDate&&r.retailDate).length);
       console.log('[ATHER QA] BDM rows:',payload.bdm.length);
-      // ── [HERO FINAL QA] Status_Name pipeline diagnostic ──────────────────────────
-      (function reFinalQAInline(j,ld){
-        const fq=s=>'[HERO FINAL QA] '+s;
+      // ── [ATHER FINAL QA] Status_Name pipeline diagnostic ──────────────────────────
+      (function atherFinalQAInline(j,ld){
+        const fq=s=>'[ATHER FINAL QA] '+s;
         const snTotal=j.length;
         const snNonBlank=j.filter(r=>r.statusName&&r.statusName.trim()!=='').length;
         const snBlank=snTotal-snNonBlank;
@@ -3642,10 +3641,10 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
         console.log(fq('ALL CLEAR: '+(allClear?'✓ YES':'⚠ SEE ABOVE')));
         console.groupEnd();
       })(joined,ld);
-      // ── Expose window.heroFinalQA() and window.heroDetailedCsvPreview() for DevTools ──
-      window.heroFinalQA=(function(j,ld){
+      // ── Expose window.atherFinalQA() and window.atherDetailedCsvPreview() for DevTools ──
+      window.atherFinalQA=(function(j,ld){
         return function(){
-          const fq=s=>'[HERO FINAL QA] '+s;
+          const fq=s=>'[ATHER FINAL QA] '+s;
           const snTotal=j.length;
           const snNonBlank=j.filter(r=>r.statusName&&r.statusName.trim()!=='').length;
           const snBlank=snTotal-snNonBlank;
@@ -3689,8 +3688,8 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
           console.groupEnd();
         };
       })(joined,ld);
-      // Preview CSV rows (no download) — call window.heroDetailedCsvPreview(n) from DevTools
-      window.heroDetailedCsvPreview=(function(j){
+      // Preview CSV rows (no download) — call window.atherDetailedCsvPreview(n) from DevTools
+      window.atherDetailedCsvPreview=(function(j){
         return function(n){
           n=n||20;
           const rows=[];
@@ -3709,20 +3708,20 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
             });
             if(rows.length>=n)break;
           }
-          console.log('[HERO FINAL QA] CSV preview (first '+n+' rows):');
+          console.log('[ATHER FINAL QA] CSV preview (first '+n+' rows):');
           console.table(rows);
           const raRows=rows.filter(r=>r.isRA);
           const nonRARows=rows.filter(r=>!r.isRA);
-          console.log('[HERO FINAL QA] Of',rows.length,'previewed:',raRows.length,'RA,',nonRARows.length,'non-RA');
+          console.log('[ATHER FINAL QA] Of',rows.length,'previewed:',raRows.length,'RA,',nonRARows.length,'non-RA');
           const leak=nonRARows.filter(r=>r.purchasedModel||r.performanceMonth||r.callType||r.retailDate);
-          console.log('[HERO FINAL QA] Non-RA rows with retail fields (MUST=0):',leak.length,leak.length?'⚠ LEAK':'✓');
+          console.log('[ATHER FINAL QA] Non-RA rows with retail fields (MUST=0):',leak.length,leak.length?'⚠ LEAK':'✓');
           const raBlank=raRows.filter(r=>!r.purchasedModel&&!r.performanceMonth);
-          console.log('[HERO FINAL QA] RA rows missing retail fields:',raBlank.length,raBlank.length?'⚠':'✓');
+          console.log('[ATHER FINAL QA] RA rows missing retail fields:',raBlank.length,raBlank.length?'⚠':'✓');
           return rows;
         };
       })(joined);
-      console.log('[HERO FINAL QA] window.heroFinalQA() and window.heroDetailedCsvPreview(n) are now available.');
-      // ── end HERO FINAL QA ──
+      console.log('[ATHER FINAL QA] window.atherFinalQA() and window.atherDetailedCsvPreview(n) are now available.');
+      // ── end ATHER FINAL QA ──
       console.groupEnd();
     }catch(e){setSyncErr(e.message);}
     finally{setSyncing(false);}
@@ -3855,7 +3854,7 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
     lastSynced&&!syncErr&&ce('div',{style:{background:'#ecfeff',borderBottom:'1px solid #a5f3fc',padding:'4px 24px',fontSize:10,color:'#155E75'}},
       '\u2713 Synced '+lastSynced.toLocaleString()+(diagnostics?' \u00b7 '+diagnostics.matched.toLocaleString('en-IN')+' bookings matched':'')
     ),
-    diagnostics&&ce(HeroDiagnostics,{d:diagnostics}),
+    diagnostics&&ce(AtherDiagnostics,{d:diagnostics}),
     /* Tab nav */
     ce('div',{style:{background:'#fff',borderBottom:'2px solid #A5F3FC',position:'sticky',top:54,zIndex:99,boxShadow:'0 2px 8px rgba(124,45,18,.08)'}},
       ce('div',{style:{maxWidth:1440,margin:'0 auto',display:'flex',alignItems:'center',gap:0,padding:'0 24px',opacity:isPending?0.6:1,transition:'opacity .15s'}},
