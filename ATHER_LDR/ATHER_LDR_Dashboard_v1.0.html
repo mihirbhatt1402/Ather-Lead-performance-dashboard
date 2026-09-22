@@ -552,6 +552,63 @@ function parseAtherLeadRows(raw){
     console.log('[ATHER LDR] Lead date column detected as:',detectedDateCol,'| All date-like keys:',Object.keys(keyMap).filter(k=>k.includes('date')||k.includes('creat')));
     console.log('[ATHER LDR] Lead sample date values:',sampleDateValues);
   }
+
+  // ── State column pre-detection ───────────────────────────────────────────
+  // Try every known alias first; if nothing matches, fall back to any column
+  // whose normalized name contains "state".  This survives column renames
+  // without requiring code changes.
+  const STATE_COL_ALIASES=[
+    'state','lead state','state name','state_name','state/ut',
+    'dealer state','geo state','state (lead)','statename',
+    'lead state name','state of lead','customer state',
+    'opty state','opty_state','opportunity state',
+    'customer_state','lead_state','dealer_state',
+    'billing state','home state','prospect state',
+    'state of the customer','state of customer',
+    'city state','state province','province',
+  ];
+  let stateColKey=null;
+  for(const alias of STATE_COL_ALIASES){
+    if(keyMap[alias]!==undefined){stateColKey=keyMap[alias];break;}
+  }
+  if(!stateColKey){
+    // Broad fallback: first column key that contains 'state'
+    for(const [k,rk] of Object.entries(keyMap)){
+      if(k.includes('state')){stateColKey=rk;break;}
+    }
+  }
+
+  // ── Region column pre-detection ──────────────────────────────────────────
+  const REGION_COL_ALIASES=[
+    'region','zone','area zone','area_zone','zone name',
+    'territory','region name','territory name','geo region',
+    'regionname','area region','sales region',
+    'division','cluster','sales zone',
+  ];
+  let regionColKey=null;
+  for(const alias of REGION_COL_ALIASES){
+    if(keyMap[alias]!==undefined){regionColKey=keyMap[alias];break;}
+  }
+  if(!regionColKey){
+    for(const [k,rk] of Object.entries(keyMap)){
+      if(k.includes('region')||k.includes('zone')){regionColKey=rk;break;}
+    }
+  }
+
+  // TEMP DIAG 5: state/region column detection
+  if(!parseAtherLeadRows._stateColLogged){
+    parseAtherLeadRows._stateColLogged=true;
+    console.group('[Ather Diag 5] Lead Master — state/region column detection');
+    console.log('All Lead Master columns:',allLeadCols.join(' | '));
+    console.log('stateColKey detected:',stateColKey||'(NOT FOUND — all states will be Unknown)');
+    console.log('regionColKey detected:',regionColKey||'(not found)');
+    // Show first 5 raw state values to confirm it is reading the right column
+    if(stateColKey){
+      const sv=raw.slice(0,10).map(r=>String(r[stateColKey]||'').trim()).filter(Boolean).slice(0,5);
+      console.log('Sample raw state values:',sv);
+    }
+    console.groupEnd();
+  }
   function get(r,keys){
     for(const k of(Array.isArray(keys)?keys:[keys])){
       const kl=k.toLowerCase().replace(/\s+/g,' ').trim();
@@ -594,9 +651,10 @@ function parseAtherLeadRows(raw){
     const webId=webIdRawKey?String(r[webIdRawKey]||'').trim():'';
     const model=get(r,['model','vehicle model','vehiclemodel','bike model']);
     const city=get(r,['city','lead city']);
-    const state=get(r,['state','lead state','state name','state_name','state/ut','dealer state','geo state','state (lead)','statename','lead state name','state of lead','customer state']);
+    // Use pre-detected column keys for state and region; fall back to get() aliases if pre-detection failed
+    const state=stateColKey?String(r[stateColKey]||'').trim():get(r,['state','lead state','state name','state_name','state/ut','dealer state','geo state','state (lead)','statename','lead state name','state of lead','customer state','opty state','opty_state','opportunity state','customer_state','lead_state','billing state','home state','prospect state','state of the customer']);
     const ao=get(r,['ao','area officer','area_officer','area officer name','ao name']);
-    const region=get(r,['region','zone','area zone','area_zone','zone name','territory','region name','territory name','geo region','regionname','area region','sales region']);
+    const region=regionColKey?String(r[regionColKey]||'').trim():get(r,['region','zone','area zone','area_zone','zone name','territory','region name','territory name','geo region','regionname','area region','sales region','division','cluster']);
     // Extra fields for Detailed CSV
     const encryptMobile=get(r,['encrypt mobile number','encrypt_mobile_number','encrypted mobile','mobile number (encrypted)','encryptmobile','mobile']);
     const idVerifiedLead=get(r,['id_verified_lead','id verified lead','id verified','idverifiedlead','id_verified']);
@@ -630,6 +688,13 @@ function parseAtherLeadRows(raw){
   });
   console.groupEnd();
   // --- END DIAG 1 ---
+  // --- TEMP DIAG 6: unique state values ---
+  {const _stUniq=new Map();for(const rx of rows){const v=rx.state||'(empty)';_stUniq.set(v,(_stUniq.get(v)||0)+1);}
+  console.group('[Ather Diag 6] Lead Master — unique state values (top 35)');
+  console.log('Total rows after filter:',rows.length,'| stateColKey:',stateColKey||'(not detected)');
+  [..._stUniq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,35).forEach(([v,c])=>console.log('  "'+v+'" → '+c+' rows'));
+  console.groupEnd();}
+  // --- END DIAG 6 ---
   return{rows,diagnostics:{totalRows:raw.length,included:rows.length,uniqueIds,dupIds:rows.length-uniqueIds,excludedBeforeCutoff,excludedInvalidDate,earliestDate,latestDate,detectedDateCol,sampleDateValues,allLeadCols,statusNameRawKey,statusNameNonBlankCount,webIdDetectedCol:webIdRawKey||'(not detected)'}};
 }
 
