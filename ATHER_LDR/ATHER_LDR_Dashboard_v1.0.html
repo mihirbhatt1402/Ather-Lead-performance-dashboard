@@ -916,6 +916,55 @@ function joinREData(leadResult,retailResult){
     console.groupEnd();
   }
   // --- END DIAG 3 ---
+  // --- TEMP DIAG 7: State × Retail reconciliation (the verification table) ---
+  let stateRetailSummary=null;
+  {
+    const stateMap=new Map();
+    let totalL=0,totalR=0;
+    for(const r of joined){
+      totalL++;
+      const st=r.state||'(empty)';
+      if(!stateMap.has(st))stateMap.set(st,{l:0,r:0,leads:[]});
+      const entry=stateMap.get(st);
+      entry.l++;
+      // isRetailedLead requires booking_month, lead_month, purchasedModel
+      if(r.isBooked&&r.booking_month&&r.lead_month){
+        const d=atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month);
+        if(d>=0&&d<=2&&ATHER_SCOPE_MODELS.has(canonPurMdl(r.purchasedModel||''))){
+          entry.r++;
+          totalR++;
+          // Store retailed lead details for cross-check (up to 3 per state)
+          if(entry.leads.length<3)entry.leads.push({id:r.opty_id,state:r.state,src:r.source,lm:r.lead_month,bm:r.booking_month,model:canonPurMdl(r.purchasedModel||'')});
+        }
+      }
+    }
+    const sorted=[...stateMap.entries()].sort((a,b)=>b[1].l-a[1].l);
+    console.group('[Ather Diag 7] STATE × RETAIL RECONCILIATION (all leads, no filters)');
+    console.log('TOTALS → Leads='+totalL+' | Retail='+totalR);
+    console.log('SUM check: expected Leads=48250, Retail=13');
+    console.log('─────────────────────────────────────────────────');
+    console.log(('State').padEnd(30)+('Leads').padStart(8)+('Retail').padStart(8)+('L2R%').padStart(8));
+    sorted.forEach(([st,v])=>{
+      const pct=v.l>0?(v.r/v.l*100).toFixed(1)+'%':'—';
+      console.log(st.padEnd(30)+String(v.l).padStart(8)+String(v.r).padStart(8)+pct.padStart(8));
+    });
+    console.log('─────────────────────────────────────────────────');
+    console.log('TOTAL'.padEnd(30)+String(totalL).padStart(8)+String(totalR).padStart(8));
+    // Detail: print retail records with their state for cross-check
+    if(totalR>0){
+      console.group('Retail records detail (state + lead metadata):');
+      sorted.filter(([,v])=>v.r>0).forEach(([st,v])=>{
+        v.leads.forEach(lr=>{
+          console.log('  Retailed lead → state="'+lr.state+'" src="'+lr.src+'" lead_month='+lr.lm+' booking_month='+lr.bm+' purchased_model="'+lr.model+'" opty_id='+lr.id);
+        });
+      });
+      console.groupEnd();
+    }
+    // Save for in-page panel
+    stateRetailSummary={totalL,totalR,rows:sorted.map(([st,v])=>({state:st,l:v.l,r:v.r}))};
+    console.groupEnd();
+  }
+  // --- END DIAG 7 ---
   return{rows:joined,diagnostics:{
     leadTotalRows:leadDiag.totalRows,leadIncluded:leadDiag.included,leadUniqueIds:leadDiag.uniqueIds,leadDupIds:leadDiag.dupIds,
     leadExcludedBeforeCutoff:leadDiag.excludedBeforeCutoff,leadExcludedInvalidDate:leadDiag.excludedInvalidDate,
@@ -929,7 +978,7 @@ function joinREData(leadResult,retailResult){
     retailBrandValues:retailDiag.brandValues,retailRawDateSamples:retailDiag.rawDateSamples,
     retailRawKeySamples:retailDiag.rawKeySamples,keyMatchSamples,
     retailKeyCount:retailKeySet.size,leadKeyCount:leadKeySet.size,
-    matched,unmatched,multiRetail}};
+    matched,unmatched,multiRetail,stateRetailSummary}};
 }
 
 function parseAtherNonScopeRetailRows(raw, joinedRows) {
@@ -983,6 +1032,46 @@ function AtherDiagnostics({d}){
   return ce('div',{className:'diag-bar'},
     ce('span',{style:{fontWeight:700,marginRight:12}},'Data Status:'),
     items.map((it,i)=>ce('span',{key:i,style:{marginRight:20}},it.l+': ',ce('strong',null,it.v)))
+  );
+}
+
+/* TEMP: State×Retail reconciliation panel — remove once QA confirmed */
+function StateRetailPanel({d}){
+  const [open,setOpen]=React.useState(false);
+  if(!d||!d.stateRetailSummary)return null;
+  const s=d.stateRetailSummary;
+  const ok=(s.totalL===d.leadIncluded)&&(s.totalR===s.rows.reduce((a,r)=>a+r.r,0));
+  const unkRow=s.rows.find(r=>r.state==='Unknown');
+  return ce('div',{style:{background:'#fefce8',borderBottom:'1px solid #fde68a',padding:'4px 24px',fontFamily:"'DM Mono',monospace",fontSize:10,color:'#78350f'}},
+    ce('div',{style:{display:'flex',alignItems:'center',gap:12}},
+      ce('strong',null,'[QA] State×Retail Reconciliation'),
+      ce('span',null,'Leads='+s.totalL+' Retail='+s.totalR+' States='+s.rows.length),
+      unkRow&&ce('span',{style:{color:'#dc2626',fontWeight:700}},'Unknown → L='+unkRow.l+' R='+unkRow.r),
+      !unkRow&&ce('span',{style:{color:'#16a34a',fontWeight:700}},'✓ No Unknown bucket'),
+      ok&&ce('span',{style:{color:'#16a34a',fontWeight:700}},'✓ SUM checks pass'),
+      ce('button',{onClick:()=>setOpen(o=>!o),style:{marginLeft:8,padding:'1px 8px',fontSize:9,border:'1px solid #fbbf24',borderRadius:4,background:'#fffbeb',cursor:'pointer'}},open?'Hide table':'Show top-25 states')
+    ),
+    open&&ce('div',{style:{marginTop:4,overflowX:'auto'}},
+      ce('table',{style:{borderCollapse:'collapse',fontSize:9,whiteSpace:'nowrap'}},
+        ce('thead',null,ce('tr',null,
+          ['State','Leads','Retail','L2R%'].map(h=>ce('th',{key:h,style:{padding:'2px 10px',borderBottom:'1px solid #fde68a',textAlign:h==='State'?'left':'right'}},h))
+        )),
+        ce('tbody',null,
+          s.rows.slice(0,25).map((r,i)=>ce('tr',{key:i,style:{background:r.state==='Unknown'?'#fef2f2':''}},
+            ce('td',{style:{padding:'1px 10px',textAlign:'left',color:r.state==='Unknown'?'#dc2626':'#1c1917'}},r.state),
+            ce('td',{style:{padding:'1px 10px',textAlign:'right'}},r.l.toLocaleString('en-IN')),
+            ce('td',{style:{padding:'1px 10px',textAlign:'right',fontWeight:r.r>0?700:400,color:r.r>0?'#0891b2':'#94a3b8'}},r.r),
+            ce('td',{style:{padding:'1px 10px',textAlign:'right',color:'#d97706'}},r.l>0?(r.r/r.l*100).toFixed(2)+'%':'—')
+          ))
+        ),
+        ce('tfoot',null,ce('tr',{style:{borderTop:'1px solid #fde68a',fontWeight:700}},
+          ce('td',{style:{padding:'2px 10px'}},'TOTAL'),
+          ce('td',{style:{padding:'2px 10px',textAlign:'right'}},s.totalL.toLocaleString('en-IN')),
+          ce('td',{style:{padding:'2px 10px',textAlign:'right'}},(s.rows.reduce((a,r)=>a+r.r,0))),
+          ce('td',null)
+        ))
+      )
+    )
   );
 }
 
@@ -4585,6 +4674,7 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
       '\u2713 Synced '+lastSynced.toLocaleString()+(diagnostics?' \u00b7 '+diagnostics.matched.toLocaleString('en-IN')+' bookings matched':'')
     ),
     diagnostics&&ce(AtherDiagnostics,{d:diagnostics}),
+    diagnostics&&ce(StateRetailPanel,{d:diagnostics}),
     /* Tab nav */
     ce('div',{style:{background:'#fff',borderBottom:'2px solid #A5F3FC',position:'sticky',top:54,zIndex:99,boxShadow:'0 2px 8px rgba(124,45,18,.08)'}},
       ce('div',{style:{maxWidth:1440,margin:'0 auto',display:'flex',alignItems:'center',gap:0,padding:'0 24px',opacity:isPending?0.6:1,transition:'opacity .15s'}},
