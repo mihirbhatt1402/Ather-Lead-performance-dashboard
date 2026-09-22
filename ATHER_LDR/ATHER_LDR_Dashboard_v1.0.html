@@ -777,7 +777,7 @@ function joinREData(leadResult,retailResult){
   {
     // Self-test: print exact atherMonthOrder and normalizeAtherMonth results
     console.group('[Ather Diag 3a] Function self-test');
-    var testInputs=["May'2026","Jun'2026","Jul'2026","Aug'2026","Sep'2026","May-2026","Jun-2026","Jul-2026","Aug-2026","Sep-2026","20 Sep 2026","01-Sep-2026","01 Sep 2026","September 2026"];
+    var testInputs=["May'2026","Jun'2026","Jul'2026","Aug'2026","Sep'2026","May'26","Jun'26","Jul'26","Aug'26","Sep'26","May-2026","Jun-2026","Sep-2026","Sep-26","20 Sep 2026","01-Sep-2026","01 Sep 2026","September 2026","Sep 2026"];
     testInputs.forEach(function(v){
       var norm=normalizeAtherMonth(v);
       var ord=atherMonthOrder(norm);
