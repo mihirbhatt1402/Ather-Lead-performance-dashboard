@@ -752,29 +752,6 @@ function joinREData(leadResult,retailResult){
       verifiedDealer:lr.verifiedDealer||'',dealerId:lr.dealerId||'',oemCrmId:lr.oemCrmId||'',
       dealerName:lr.dealerName||'',enquiryId:lr.enquiryId||'',utmCampaign:lr.utmCampaign||'',statusName:lr.statusName||''};
   });
-  // --- TEMPORARY RETAIL DIAGNOSTICS (console only) ---
-  {
-    const dDist={lt0:0,eq0:0,eq1:0,eq2:0,eq3:0,gt3:0};
-    const samples=[];
-    let finalRetailed=0;
-    for(const r of joined){
-      if(!r.isBooked)continue;
-      const d=atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month);
-      if(d<0)dDist.lt0++;else if(d===0)dDist.eq0++;else if(d===1)dDist.eq1++;else if(d===2)dDist.eq2++;else if(d===3)dDist.eq3++;else dDist.gt3++;
-      const inc=(d>=0&&d<=2);
-      if(inc)finalRetailed++;
-      if(samples.length<5)samples.push({leadId:r.opty_id,lead_month:r.lead_month,booking_month:r.booking_month,d,included:inc});
-    }
-    console.group('[Ather Retail Diagnostics]');
-    console.log('Retail Master rows loaded:',retailRows.length);
-    console.log('Valid retail sourceLeadIds:',retailKeySet.size);
-    console.log('Leads with matching retail (isBooked=true):',matched);
-    console.log('d distribution:',dDist);
-    console.log('Final attributed retails (d in [0,2]):',finalRetailed);
-    console.table(samples);
-    console.groupEnd();
-  }
-  // --- END TEMPORARY DIAGNOSTICS ---
   return{rows:joined,diagnostics:{
     leadTotalRows:leadDiag.totalRows,leadIncluded:leadDiag.included,leadUniqueIds:leadDiag.uniqueIds,leadDupIds:leadDiag.dupIds,
     leadExcludedBeforeCutoff:leadDiag.excludedBeforeCutoff,leadExcludedInvalidDate:leadDiag.excludedInvalidDate,
@@ -2259,7 +2236,6 @@ const OverviewTab = React.memo(function OverviewTab({ data, filters, RT }) {
 /* ════════════════════════════════════════════════════════════════════
    SOURCE ANALYSIS TAB
    ════════════════════════════════════════════════════════════════════ */
-const ENQUIRY_CAT = new Set(['Direct Push', 'L1 Nurtured']);
 const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months, RT, onDetailedCsv, nsRetailRows, rawJoined }) {
   const { maps, sm, univ: univRaw, csm: csmRaw } = data;
   const univ = univRaw || [];
