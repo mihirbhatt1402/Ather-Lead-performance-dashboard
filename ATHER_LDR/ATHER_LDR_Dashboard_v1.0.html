@@ -594,9 +594,9 @@ function parseAtherLeadRows(raw){
     const webId=webIdRawKey?String(r[webIdRawKey]||'').trim():'';
     const model=get(r,['model','vehicle model','vehiclemodel','bike model']);
     const city=get(r,['city','lead city']);
-    const state=get(r,['state','lead state']);
-    const ao=get(r,['ao','area officer','area_officer','area officer name']);
-    const region=get(r,['region','zone','area zone','area_zone']);
+    const state=get(r,['state','lead state','state name','state_name','state/ut','dealer state','geo state','state (lead)','statename','lead state name','state of lead','customer state']);
+    const ao=get(r,['ao','area officer','area_officer','area officer name','ao name']);
+    const region=get(r,['region','zone','area zone','area_zone','zone name','territory','region name','territory name','geo region','regionname','area region','sales region']);
     // Extra fields for Detailed CSV
     const encryptMobile=get(r,['encrypt mobile number','encrypt_mobile_number','encrypted mobile','mobile number (encrypted)','encryptmobile','mobile']);
     const idVerifiedLead=get(r,['id_verified_lead','id verified lead','id verified','idverifiedlead','id_verified']);
@@ -715,10 +715,17 @@ function parseAtherRetailRows(raw){
     const callType=ctLow.includes('dms')?'dms':ctLow.includes('call')?'co':'other';
     if(callType==='dms'){if(!latestDmsDate||retailDate>latestDmsDate)latestDmsDate=retailDate;}
     if(callType==='co'){if(!latestCoDate||retailDate>latestCoDate)latestCoDate=retailDate;}
-    const purchasedModel=get(r,['purchasedmodel','purchased model','purchased_model','purchasedmodelname','purchased model name','model','model name','vehicle model','vehicle_model','product','product name','vehicle name','vehiclename','vehicle','model_name','productname']);
+    const purchasedModel=get(r,['retail model','retailmodel','retail_model','invoiced model','invoicedmodel','invoiced_model','purchased model','purchased_model','purchasedmodel','purchasedmodelname','purchased model name','model','model name','vehicle model','vehicle_model','product','product name','vehicle name','vehiclename','vehicle','model_name','productname']);
     rows.push({sourceLeadId,performanceMonth,callType,retailDate,purchasedModel});
   }
   const uniqueIds=new Set(rows.map(r=>r.sourceLeadId)).size;
+  // --- TEMP DIAG 4: unique purchasedModel values ---
+  {const _pmUniq=new Map();for(const rx of rows){const v=rx.purchasedModel||'(empty)';_pmUniq.set(v,(_pmUniq.get(v)||0)+1);}
+  console.group('[Ather Diag 4] Retail Master — unique purchasedModel values (top 30)');
+  console.log('Total retail rows after filter:',rows.length);
+  [..._pmUniq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,30).forEach(([v,c])=>console.log('  "'+v+'" → '+c+' rows'));
+  console.groupEnd();}
+  // --- END DIAG 4 ---
   const brandValues=[...brandValMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10).map(([v,c])=>v+'('+c+')');
   // --- TEMP DIAG 2: performance_month format (scalar values) ---
   console.group('[Ather Diag 2] Retail Master — performance_month raw format (first 10 Ather-brand rows)');
@@ -822,7 +829,25 @@ function joinREData(leadResult,retailResult){
     }
     console.log('=== d DISTRIBUTION ===');
     console.log('lt0='+dDist.lt0+' | eq0='+dDist.eq0+' | eq1='+dDist.eq1+' | eq2='+dDist.eq2+' | eq3='+dDist.eq3+' | gt3='+dDist.gt3+' | missingMonth='+dDist.missingMonth);
-    console.log('FINAL ATTRIBUTED RETAILS: '+finalRetailed);
+    console.log('FINAL ATTRIBUTED RETAILS (d=0-2, any model): '+finalRetailed);
+    // --- TEMP DIAG 3c: scope filter breakdown ---
+    {let preScope=0,outOfScope=0,inScope=0;const scopeModels=new Map();
+    for(const r of joined){
+      if(!r.isBooked||!r.booking_month||!r.lead_month)continue;
+      const d=atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month);
+      if(d<0||d>2)continue;
+      preScope++;
+      const canon=canonPurMdl(r.purchasedModel||'');
+      if(ATHER_SCOPE_MODELS.has(canon)){inScope++;scopeModels.set(canon,(scopeModels.get(canon)||0)+1);}
+      else outOfScope++;
+    }
+    console.group('[Ather Diag 3c] Scope filter (d=0-2)');
+    console.log('Pre-scope (d=0-2, all models): '+preScope);
+    console.log('IN scope (Rizta/450X/450S/450 Apex): '+inScope);
+    console.log('Out of scope: '+outOfScope);
+    console.log('In-scope breakdown by model:');
+    scopeModels.forEach((cnt,mdl)=>console.log('  "'+mdl+'": '+cnt));
+    console.groupEnd();}
     console.groupEnd();
   }
   // --- END DIAG 3 ---
@@ -927,7 +952,8 @@ function buildPayload(joinedRows){
   function isRetailed(r){
     if(!r.isBooked||!r.booking_month||!r.lead_month)return false;
     const d=atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month);
-    return d>=0&&d<=2;
+    if(d<0||d>2)return false;
+    return ATHER_SCOPE_MODELS.has(canonPurMdl(r.purchasedModel||''));
   }
 
   // On Create accumulators (lead_month dimension, all leads + unique subset)
@@ -944,28 +970,14 @@ function buildPayload(joinedRows){
   const wmA=new Map(),cwmA=new Map(),wunivA=new Map();
   const bm_wmA=new Map(),bm_cwmA=new Map(),bm_wunivA=new Map();
 
-  // Retail Dispersion (bdm): [rep_days, src_idx, lm_idx, L, R_all, R_dms, R_co]
-  // rep_days = representative numeric value per BD bucket (passes through bdBucket correctly)
-  const BD_REP={'0–7':0,'8–14':8,'15–30':15,'31–60':31,'61–90':61,'90+':91};
-  const bdmA=new Map(),u_bdmA=new Map();
-  // Retail Dispersion Model matrix: [enq_mi, is_same(1=same/0=cross), lm_idx, count_all, count_dms, count_co, _]
-  const rdmA=new Map();
-  // Retail Dispersion Model drill-down matrix: [enq_mi, pur_mi, is_same, si, sti, ci, lti, li, cnt_all, cnt_dms, cnt_co, _]
+  // Purchased model dimension for Model Performance retail attribution
   const purMdlArr=[],purMdlMap=Object.create(null);
-  const rdmxA=new Map();
   // Purchased-model × source × month (retail only): used by Model Performance for retail attribution
   const pmsmA=new Map(),bm_pmsmA=new Map();
   const pm_ltmA=new Map(),bm_pm_ltmA=new Map(); // purMdl×LT×src×month (retail only)
   const pm_csmA=new Map(),bm_pm_csmA=new Map(); // purMdl×city×src×month (retail only)
   const pm_mxstA=new Map(),bm_pm_mxstA=new Map(); // purMdl×state×month (retail only)
 
-  // normMdl: normalise model name for SAME vs CROSS comparison
-  function normMdl(s){return(s||'').toLowerCase().replace(/^ather\s+/,'').replace(/[^a-z0-9]+/g,' ').trim();}
-  // Purchased-model equivalences: these retailed models count as SAME as the mapped canonical norm
-  // Ather model equivalences for SAME vs CROSS comparison in Retail Dispersion.
-  // Add entries here when an Ather enquiry model and purchased model are the same bike.
-  const ATHER_SAME_MDL_EQUIV = {};
-  function normForSame(n){ return ATHER_SAME_MDL_EQUIV[n] || n; }
   // canonPurMdl is defined at module scope — usable here and in tab components
 
   // a4: accumulate [L, R_all, R_dms, R_co]
@@ -1028,16 +1040,7 @@ function buildPayload(joinedRows){
     a4(bm_cwmA,ci+'|'+wi+'|'+bmi,L,R,Rd,Rc);
     a4(bm_wunivA,mi+'|'+wi+'|'+sti+'|'+lti+'|'+bmi,L,R,Rd,Rc);
 
-    // Retail Dispersion (day-bucket legacy — kept for data integrity)
-    if(r.isBooked&&r.leadDate&&r.retailDate){
-      const days=Math.max(0,Math.round((r.retailDate.getTime()-r.leadDate.getTime())/86400000));
-      const bk=bdBucket(days);
-      const rep=BD_REP[bk];
-      const Ra2=1,Rd2=(r.callType==='dms')?1:0,Rc2=(r.callType==='co')?1:0;
-      a4(bdmA,rep+'|'+si+'|'+li,1,Ra2,Rd2,Rc2);
-      if(r.isUnique)a4(u_bdmA,rep+'|'+si+'|'+li,1,Ra2,Rd2,Rc2);
-    }
-    // Retail Dispersion Model: SAME vs CROSS per enquired model (all filter dims)
+    // Retail attribution: accumulate purchased-model matrices for Model Performance
     if(isRetailed(r)){
       const Ra2=1,Rd2=(r.callType==='dms')?1:0,Rc2=(r.callType==='co')?1:0;
       const purMI=idx(purMdlArr,purMdlMap,canonPurMdl(r.purchasedModel||''));
@@ -1050,16 +1053,9 @@ function buildPayload(joinedRows){
       // Purchased-model × city × source × month (retail only — L=0)
       a4(pm_csmA,purMI+'|'+ci+'|'+si+'|'+li,0,Ra2,Rd2,Rc2);
       a4(bm_pm_csmA,purMI+'|'+ci+'|'+si+'|'+bmi,0,Ra2,Rd2,Rc2);
-      // Purchased-model × state × month (retail only — L=0): for retail heatmap
+      // Purchased-model × state × month (retail only — L=0)
       a4(pm_mxstA,purMI+'|'+sti+'|'+li,0,Ra2,Rd2,Rc2);
       a4(bm_pm_mxstA,purMI+'|'+sti+'|'+bmi,0,Ra2,Rd2,Rc2);
-      const enqN=normMdl(r.model);
-      const purN=normMdl(r.purchasedModel);
-      if(purN){
-        const isSame=(normForSame(enqN)===normForSame(purN))?1:0;
-        a4(rdmA,mi+'|'+isSame+'|'+si+'|'+sti+'|'+ci+'|'+lti+'|'+li,Ra2,Rd2,Rc2,0);
-        a4(rdmxA,mi+'|'+purMI+'|'+isSame+'|'+si+'|'+sti+'|'+ci+'|'+lti+'|'+li,Ra2,Rd2,Rc2,0);
-      }
     }
   }
   const f1=m=>[...m.entries()].map(([k,v])=>[+k,v[0],v[1],v[2],v[3]]);
@@ -1085,7 +1081,7 @@ function buildPayload(joinedRows){
     pmsm:f3(pmsmA),bm_pmsm:f3(bm_pmsmA),
     pm_ltm:f4(pm_ltmA),bm_pm_ltm:f4(bm_pm_ltmA),pm_csm:f4(pm_csmA),bm_pm_csm:f4(bm_pm_csmA),
     pm_mxst:f3(pm_mxstA),bm_pm_mxst:f3(bm_pm_mxstA),
-    disp:[],u_disp:[],zm:[],u_zm:[],bdm:f3(bdmA),u_bdm:f3(u_bdmA),rdm:f7(rdmA),rdmx:f8(rdmxA),
+    disp:[],u_disp:[],zm:[],u_zm:[],bdm:[],u_bdm:[],rdm:[],rdmx:[],
     mlt:[],stlt:[],cdm:[],cdsm:[],stcm:[],
     u_mlt:[],u_stlt:[],u_cdm:[],u_cdsm:[],u_stcm:[],
     stdm:[],mxdl:[],ltdl:[],u_stdm:[],u_mxdl:[],u_ltdl:[],
@@ -1386,7 +1382,8 @@ function DetailedCsvBtn({onClick}) {
 function isRetailedLead(r) {
   if (!r.isBooked || !r.booking_month || !r.lead_month) return false;
   const d = atherMonthOrder(r.booking_month) - atherMonthOrder(r.lead_month);
-  return d >= 0 && d <= 2;
+  if (d < 0 || d > 2) return false;
+  return ATHER_SCOPE_MODELS.has(canonPurMdl(r.purchasedModel||''));
 }
 
 function exportDetailedCsv(rawJoined, filters, RT, leadsMode, filename, monthOverride) {
@@ -1528,9 +1525,27 @@ function makeAggCsv(agg, dimLabel, filename) {
 // has() returns false for every real option → zero records for that dimension.
 const FILTER_CLEARED = Object.freeze(new Set(['\x00']));
 
-// Canonical display name for purchased model — used in buildPayload and in filter comparisons
-const _RE_PUR_MDL_CANONICAL = {};
-function canonPurMdl(s) { return _RE_PUR_MDL_CANONICAL[s] || s; }
+// Case-insensitive canonical mapping: Retail Master raw purchased/retail model → dashboard display name
+const _RE_PUR_MDL_CANONICAL_LOWER = {
+  // Rizta variants
+  'rizta':'Ather Rizta','ather rizta':'Ather Rizta','rizta s':'Ather Rizta','ather rizta s':'Ather Rizta',
+  'rizta z':'Ather Rizta','ather rizta z':'Ather Rizta',
+  // 450X variants
+  '450x':'Ather 450X','ather 450x':'Ather 450X','450 x':'Ather 450X','ather 450 x':'Ather 450X',
+  'ather 450x gen 3':'Ather 450X','450x gen 3':'Ather 450X',
+  // 450S variants
+  '450s':'Ather 450S','ather 450s':'Ather 450S','450 s':'Ather 450S','ather 450 s':'Ather 450S',
+  // 450 Apex variants
+  '450 apex':'Ather 450 Apex','ather 450 apex':'Ather 450 Apex',
+  '450apex':'Ather 450 Apex','ather 450apex':'Ather 450 Apex',
+  '450 apex gen 3':'Ather 450 Apex','ather 450 apex gen 3':'Ather 450 Apex',
+};
+// In-scope Ather models for retail attribution
+const ATHER_SCOPE_MODELS = new Set(['Ather Rizta','Ather 450X','Ather 450S','Ather 450 Apex']);
+function canonPurMdl(s) {
+  const t = (s||'').trim();
+  return _RE_PUR_MDL_CANONICAL_LOWER[t.toLowerCase()] || t;
+}
 
 const MultiSelect = React.memo(function MultiSelect({ label, options, selected, onChange }) {
   const [open, setOpen] = useState(false);
@@ -3219,250 +3234,6 @@ const StateSourceTab = React.memo(function StateSourceTab({ data, filters, month
   );
 });
 
-/* ════════════════════════════════════════════════════════════════════
-   RETAIL DISPERSION TAB
-   ════════════════════════════════════════════════════════════════════ */
-const DISP_PM_CAT = {};
-const DISP_LM_CAT = {};
-
-const DispersionTab = React.memo(function DispersionTab({ data, filters, months, RT, onDetailedCsv }) {
-  const { maps, rdm, rdmx } = data;
-  if (!rdm) return ce('div',{className:'fade-up'},ce('div',{className:'card',style:{padding:32,textAlign:'center',color:'#94A3B8'}},'Retail Dispersion data not yet available. Please sync data.'));
-
-  const rtCol = RT === 'dms' ? 8 : RT === 'co' ? 9 : 7;
-  const rdmxCol = rtCol + 1;
-
-  const [expandedModels, setExpandedModels] = useState(new Set());
-  function toggleExpand(mi) {
-    setExpandedModels(prev => {
-      const next = new Set(prev);
-      if (next.has(mi)) next.delete(mi); else next.add(mi);
-      return next;
-    });
-  }
-
-  function passesFilters(mi, si, sti, ci, lti, li) {
-    const allMdl = !filters.models    || filters.models.size    === 0;
-    const allSrc = !filters.sources   || filters.sources.size   === 0;
-    const allSt  = !filters.states    || filters.states.size    === 0;
-    const allCi  = !filters.cities    || filters.cities.size    === 0;
-    const allLt  = !filters.leadTypes || filters.leadTypes.size === 0;
-    if (!allMdl && !filters.models.has(maps.mdl[mi])) return false;
-    if (!allSrc && !filters.sources.has(maps.src[si])) return false;
-    if (!allSt  && !filters.states.has(maps.st[sti])) return false;
-    if (!allCi  && !filters.cities.has(maps.city[ci])) return false;
-    if (!allLt  && !filters.leadTypes.has(maps.lt[lti])) return false;
-    return true;
-  }
-
-  function buildTable(monthSet) {
-    const byModel = new Map();
-    for (const row of rdm) {
-      const mi=row[0],isSame=row[1],si=row[2],sti=row[3],ci=row[4],lti=row[5],li=row[6];
-      const cnt = row[rtCol] || 0;
-      if (cnt === 0) continue;
-      if (!monthSet.has(maps.lm[li])) continue;
-      if (!passesFilters(mi,si,sti,ci,lti,li)) continue;
-      if (!byModel.has(mi)) byModel.set(mi, { same: 0, cross: 0 });
-      const e = byModel.get(mi);
-      if (isSame) e.same += cnt; else e.cross += cnt;
-    }
-    return byModel;
-  }
-
-  function buildDrillDown(monthSet) {
-    const byEnqModel = new Map();
-    if (!rdmx) return byEnqModel;
-    for (const row of rdmx) {
-      const mi=row[0],purMI=row[1],si=row[3],sti=row[4],ci=row[5],lti=row[6],li=row[7];
-      const cnt = row[rdmxCol] || 0;
-      if (cnt === 0) continue;
-      if (!monthSet.has(maps.lm[li])) continue;
-      if (!passesFilters(mi,si,sti,ci,lti,li)) continue;
-      const pmName = maps.purMdl[purMI] || '';
-      const pmCat  = DISP_PM_CAT[pmName] !== undefined ? DISP_PM_CAT[pmName] : pmName;
-      const lmCat  = DISP_LM_CAT[maps.mdl[mi]];
-      const isSame = lmCat !== undefined && pmCat === lmCat;
-      if (!byEnqModel.has(mi)) byEnqModel.set(mi, new Map());
-      const inner = byEnqModel.get(mi);
-      if (!inner.has(pmCat)) inner.set(pmCat, { cnt: 0, isSame });
-      inner.get(pmCat).cnt += cnt;
-    }
-    return byEnqModel;
-  }
-
-  function buildTableFromDrillDown(dd) {
-    const out = new Map();
-    for (const [mi, catMap] of dd) {
-      let same = 0, cross = 0;
-      for (const [, v] of catMap) {
-        if (v.isSame) same += v.cnt; else cross += v.cnt;
-      }
-      if (same + cross > 0) out.set(mi, { same, cross });
-    }
-    return out;
-  }
-
-  function renderCard(title, byModel, drillDown, csvName, dispMonth) {
-    if (!byModel || byModel.size === 0) return null;
-    const rows = [...byModel.entries()].map(([mi, v]) => ({
-      mi,
-      model: maps.mdl[mi],
-      same: v.same, cross: v.cross,
-      total: v.same + v.cross,
-      disp: (v.same + v.cross) > 0 ? v.cross / (v.same + v.cross) * 100 : 0,
-    })).filter(r => r.total > 0).sort((a, b) => b.total - a.total);
-    if (rows.length === 0) return null;
-
-    const grandSame  = rows.reduce((s, r) => s + r.same, 0);
-    const grandCross = rows.reduce((s, r) => s + r.cross, 0);
-    const grandTotal = grandSame + grandCross;
-    const grandDisp  = grandTotal > 0 ? grandCross / grandTotal * 100 : 0;
-    const maxDisp    = Math.max(...rows.map(r => r.disp), 1);
-
-    return ce('div', { className:'card', style:{padding:'16px 18px',marginBottom:14,borderTop:'3px solid #164E63'} },
-      ce('div', { style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10} },
-        ce('div', { className:'section-title', style:{marginBottom:0} }, title),
-        ce('div',{style:{display:'flex',gap:0}},
-          ce(CsvBtn, { onClick:() => {
-            const aoa = [['Enquired Model','Same','Cross','Total','Dispersion%']];
-            rows.forEach(r => aoa.push([r.model, r.same, r.cross, r.total, +r.disp.toFixed(2)]));
-            aoa.push(['Σ Grand Total', grandSame, grandCross, grandTotal, +grandDisp.toFixed(2)]);
-            exportCsv(aoa, csvName);
-          }}),
-          onDetailedCsv && ce(DetailedCsvBtn, { onClick:()=>onDetailedCsv('Dispersion', dispMonth||null) })
-        )
-      ),
-      ce('div', { className:'scroll-x' },
-        ce('table', null,
-          ce('thead', null,
-            ce('tr', null,
-              ce('th', { className:'left', style:{minWidth:200} }, 'Enquired Model'),
-              ce('th', { style:{color:'#fff'} }, 'Same ✓'),
-              ce('th', { style:{color:'#fff'} }, 'Cross ✗'),
-              ce('th', null, 'Total'),
-              ce('th', { style:{minWidth:200} }, 'Dispersion %'),
-            )
-          ),
-          ce('tbody', null,
-            ...rows.flatMap(r => {
-              const barW = maxDisp > 0 ? Math.min(100, r.disp / maxDisp * 100) : 0;
-              const barColor = r.disp < 20 ? '#22C55E' : r.disp < 35 ? '#F59E0B' : r.disp < 50 ? '#F97316' : '#EF4444';
-              const isExpanded = expandedModels.has(r.mi);
-
-              const childRows = (drillDown && drillDown.has(r.mi))
-                ? [...drillDown.get(r.mi).entries()]
-                    .map(([cat, v]) => ({ purModel: cat, cnt: v.cnt, isSame: v.isSame }))
-                    .filter(c => c.cnt > 0)
-                    .sort((a, b) => {
-                      if (a.isSame !== b.isSame) return b.isSame - a.isSame;
-                      return b.cnt - a.cnt;
-                    })
-                : [];
-
-              const parentRow = ce('tr', {
-                key: 'p-' + r.mi,
-                style: { cursor: childRows.length > 0 ? 'pointer' : 'default' },
-                onClick: childRows.length > 0 ? () => toggleExpand(r.mi) : undefined,
-              },
-                ce('td', { className:'label' },
-                  ce('span', { style:{display:'inline-block',width:14,marginRight:4,fontSize:11,color:'#64748B',userSelect:'none'} },
-                    childRows.length > 0 ? (isExpanded ? '▼' : '▶') : ''
-                  ),
-                  r.model
-                ),
-                ce('td', { style:{color:'#16A34A',fontWeight:700} }, Nf(r.same)),
-                ce('td', { style:{color:'#DC2626',fontWeight:700} }, Nf(r.cross)),
-                ce('td', { style:{fontWeight:600} }, Nf(r.total)),
-                ce('td', null,
-                  ce('div', { style:{display:'flex',alignItems:'center',gap:8} },
-                    ce('div', { style:{flex:1,background:'#F1F5F9',borderRadius:4,height:8,overflow:'hidden'} },
-                      ce('div', { style:{width:barW+'%',height:'100%',background:barColor,borderRadius:4,transition:'width .3s'} })
-                    ),
-                    ce('span', { style:{minWidth:42,textAlign:'right',fontWeight:700,color:barColor,fontFamily:'DM Mono,monospace',fontSize:12} },
-                      r.disp.toFixed(1)+'%'
-                    )
-                  )
-                )
-              );
-
-              if (!isExpanded || childRows.length === 0) return [parentRow];
-
-              const childTrs = childRows.map((c, ci) =>
-                ce('tr', { key: 'c-' + r.mi + '-' + ci, style:{background:'var(--drill-bg,#F8FAFC)'} },
-                  ce('td', { className:'label', style:{paddingLeft:32,fontSize:12,color:'#475569'} },
-                    ce('span', { style:{color:'#94A3B8',marginRight:5} }, '↳'),
-                    c.purModel || '(blank)'
-                  ),
-                  ce('td', { style:{fontSize:12,fontWeight:600,color:'#334155'} }, Nf(c.cnt)),
-                  ce('td', { style:{fontSize:12,fontWeight:700,color: c.isSame ? '#16A34A' : '#DC2626'} },
-                    c.isSame ? 'Same' : 'Cross'
-                  ),
-                  ce('td', { style:{fontSize:12,fontWeight:600,color:'#1E40AF',fontFamily:'DM Mono,monospace'} },
-                    (c.cnt / r.total * 100).toFixed(1) + '%'
-                  ),
-                  ce('td', null)
-                )
-              );
-
-              const subtotalTr = ce('tr', { key: 'st-' + r.mi, style:{background:'var(--drill-sub,#EFF6FF)',borderTop:'1px solid #BFDBFE'} },
-                ce('td', { className:'label', style:{paddingLeft:32,fontSize:12,fontWeight:700,color:'#1E40AF'} }, 'Total'),
-                ce('td', { style:{fontSize:12,fontWeight:700,color:'#1E40AF'} }, Nf(r.total)),
-                ce('td', null),
-                ce('td', { style:{fontSize:12,fontWeight:700,color:'#1E40AF',fontFamily:'DM Mono,monospace'} }, '100.0%'),
-                ce('td', null)
-              );
-
-              return [parentRow, ...childTrs, subtotalTr];
-            }),
-            ce('tr', { className:'total-row' },
-              ce('td', { className:'label', style:{color:'#1A237E'} }, 'Σ Grand Total'),
-              ce('td', { style:{color:'#16A34A',fontWeight:700} }, Nf(grandSame)),
-              ce('td', { style:{color:'#DC2626',fontWeight:700} }, Nf(grandCross)),
-              ce('td', { style:{fontWeight:700} }, Nf(grandTotal)),
-              ce('td', { style:{fontWeight:700,color:'#1A237E'} }, grandDisp.toFixed(1)+'%')
-            )
-          )
-        )
-      )
-    );
-  }
-
-  const activeMonths = useMemo(() => {
-    if (filters.months && filters.months.size > 0) return filters.months;
-    return new Set(months);
-  }, [filters.months, months]);
-
-  const allDrillDown      = useMemo(() => buildDrillDown(activeMonths), [rdmx, maps, filters, activeMonths, rdmxCol]);
-  const monthlyDrillDowns = useMemo(() => months.map(M => buildDrillDown(new Set([M]))), [rdmx, maps, filters, months, rdmxCol]);
-  const allMonthsMap = useMemo(() =>
-    allDrillDown.size > 0 ? buildTableFromDrillDown(allDrillDown) : buildTable(activeMonths),
-  [allDrillDown, rdm, maps, filters, activeMonths, rtCol]);
-  const monthlyMaps  = useMemo(() =>
-    months.map((M, idx) => ({ M, byModel: (monthlyDrillDowns[idx] && monthlyDrillDowns[idx].size > 0) ? buildTableFromDrillDown(monthlyDrillDowns[idx]) : buildTable(new Set([M])) })),
-  [monthlyDrillDowns, rdm, maps, filters, months, rtCol]);
-
-  return ce('div', { className:'fade-up' },
-    rdm.length === 0 && ce('div',{className:'card',style:{padding:32,textAlign:'center',color:'#94A3B8'}},
-      'No retail dispersion data. Ensure Retail Master contains a model/vehicle column and May 2026+ records.'),
-    renderCard(
-      'Σ All Months — Retail Dispersion Summary',
-      allMonthsMap,
-      allDrillDown,
-      'Ather_Retail_Dispersion_AllMonths.csv',
-      null
-    ),
-    monthlyMaps.map(({ M, byModel }, idx) =>
-      renderCard(
-        'Retail Dispersion — ' + M,
-        byModel,
-        monthlyDrillDowns[idx],
-        'Ather_Retail_Dispersion_' + M.replace(/[^a-z0-9]/gi, '_') + '.csv',
-        M
-      )
-    )
-  );
-});
 
 /* ════════════════════════════════════════════════════════════════════
    FILTER BAR
@@ -4365,7 +4136,6 @@ const TABS = [
   { id:'modelxsrc',       label:'Model Performance' },
   { id:'statexsrc',       label:'State Performance' },
   { id:'geodealer',       label:'Geo & Dealer' },
-  { id:'dispersion',      label:'Retail Dispersion' },
   { id:'pivot',           label:'Pivot Table' },
 ];
 
@@ -4689,7 +4459,6 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
       case 'statexmodel': return ce(StateModelTab,    props);
       case 'cityxmodel':  return ce(CityModelTab,     props);
       case 'geodealer':       return ce(GeoAndDealerTab,      {...props,rawJoined,leadsMode});
-      case 'dispersion':      return ce(DispersionTab,       props);
       case 'pivot':       return ce(PivotTab,         {...props,rawJoined,leadsMode});
       default: return null;
     }
