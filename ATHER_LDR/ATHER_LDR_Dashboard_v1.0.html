@@ -561,10 +561,12 @@ function parseAtherLeadRows(raw){
   const rows=[];
   let excludedBeforeCutoff=0,excludedInvalidDate=0;
   let earliestDate=null,latestDate=null;
+  const _lmDiag=[];
   for(const r of raw){
     const opty_id=get(r,['opty_id','opty id','lead id','leadid','lead_id','opportunity id','opportunity_id']);
     const lead_month_raw=get(r,['lead month','lead_month','leadmonth','month']);
     const lead_month=normalizeAtherMonth(lead_month_raw);
+    if(_lmDiag.length<10&&lead_month_raw)_lmDiag.push({raw:lead_month_raw,normalized:lead_month,order:atherMonthOrder(lead_month)});
     if(!opty_id||!lead_month)continue; // structural skip (not counted in cutoff diagnostics)
     // PRIMARY GATE: Lead_Month must be May'2026 or later.
     // NOTE: lead_month is sourced from the 'lead_month'/'lead month'/'month' COLUMN in the sheet.
@@ -619,6 +621,11 @@ function parseAtherLeadRows(raw){
   const uniqueIds=new Set(rows.map(r=>r.opty_id)).size;
   const statusNameRawKey=keyMap['status_name']||keyMap['status name']||keyMap['statusname']||'';
   const statusNameNonBlankCount=rows.filter(r=>r.statusName&&r.statusName.trim()!=='').length;
+  // --- TEMP DIAG 1: lead_month format ---
+  console.group('[Ather Diag 1] Lead Master — lead_month raw format (first 10 rows)');
+  console.table(_lmDiag);
+  console.groupEnd();
+  // --- END DIAG 1 ---
   return{rows,diagnostics:{totalRows:raw.length,included:rows.length,uniqueIds,dupIds:rows.length-uniqueIds,excludedBeforeCutoff,excludedInvalidDate,earliestDate,latestDate,detectedDateCol,sampleDateValues,allLeadCols,statusNameRawKey,statusNameNonBlankCount,webIdDetectedCol:webIdRawKey||'(not detected)'}};
 }
 
@@ -672,6 +679,7 @@ function parseAtherRetailRows(raw){
   const brandValMap=new Map();
   const rawDateSamples=[]; // raw date strings from Hero-brand rows
   const rawKeySamples=[]; // sourceLeadId values from Hero-brand rows
+  const _pmDiag=[]; // TEMP DIAG 2: performance_month format
   for(const r of raw){
     const proc=brandColKey?String(r[brandColKey]||'').trim():get(r,['process','brand','oem','manufacturer','oem brand','brand name']);
     const procLow=(proc||'').toLowerCase().trim();
@@ -682,7 +690,9 @@ function parseAtherRetailRows(raw){
     if(!isAtherBrand){excludedBrand++;continue;}
     reBrandCount++;
     const sourceLeadId=get(r,['sourcelead id','sourcelead_id','source lead id','source_lead_id','sourceleadid','lead id','leadid','optyid','opty id','opty_id']);
-    const performanceMonth=normalizeAtherMonth(get(r,['performance month','performancemonth','performance_month','retail month','retailmonth','month']));
+    const pmRaw=get(r,['performance month','performancemonth','performance_month','retail month','retailmonth','month']);
+    const performanceMonth=normalizeAtherMonth(pmRaw);
+    if(_pmDiag.length<10&&pmRaw)_pmDiag.push({raw:pmRaw,normalized:performanceMonth,order:atherMonthOrder(performanceMonth)});
     if(!sourceLeadId||!performanceMonth){excludedKey++;continue;}
     // Capture sample keys and dates from Hero-brand rows
     if(rawKeySamples.length<10)rawKeySamples.push(sourceLeadId);
@@ -706,6 +716,13 @@ function parseAtherRetailRows(raw){
   }
   const uniqueIds=new Set(rows.map(r=>r.sourceLeadId)).size;
   const brandValues=[...brandValMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10).map(([v,c])=>v+'('+c+')');
+  // --- TEMP DIAG 2: performance_month format ---
+  console.group('[Ather Diag 2] Retail Master — performance_month raw format (first 10 Ather-brand rows)');
+  console.log('Retail Master total rows:',raw.length,'| Ather-brand rows:',reBrandCount,'| Passed date filter:',rows.length);
+  console.log('excludedBrand:',excludedBrand,'| excludedKey:',excludedKey,'| excludedBeforeCutoff:',excludedBeforeCutoff,'| excludedInvalidDate:',excludedInvalidDate);
+  console.table(_pmDiag);
+  console.groupEnd();
+  // --- END DIAG 2 ---
   return{rows,diagnostics:{
     totalRows:raw.length,reRows:rows.length,uniqueIds,
     excludedBrand,excludedKey,excludedBeforeCutoff,excludedInvalidDate,
@@ -752,6 +769,42 @@ function joinREData(leadResult,retailResult){
       verifiedDealer:lr.verifiedDealer||'',dealerId:lr.dealerId||'',oemCrmId:lr.oemCrmId||'',
       dealerName:lr.dealerName||'',enquiryId:lr.enquiryId||'',utmCampaign:lr.utmCampaign||'',statusName:lr.statusName||''};
   });
+  // --- TEMP DIAG 3: d-distribution across matched bookings ---
+  {
+    const dDist={lt0:0,eq0:0,eq1:0,eq2:0,eq3:0,gt3:0,missingMonth:0};
+    const samples=[];
+    let finalRetailed=0;
+    for(const r of joined){
+      if(!r.isBooked)continue;
+      if(!r.booking_month||!r.lead_month){dDist.missingMonth++;continue;}
+      const bmo=atherMonthOrder(r.booking_month);
+      const lmo2=atherMonthOrder(r.lead_month);
+      const d=bmo-lmo2;
+      if(d<0)dDist.lt0++;
+      else if(d===0)dDist.eq0++;
+      else if(d===1)dDist.eq1++;
+      else if(d===2)dDist.eq2++;
+      else if(d===3)dDist.eq3++;
+      else dDist.gt3++;
+      const inc=(d>=0&&d<=2);
+      if(inc)finalRetailed++;
+      if(samples.length<10)samples.push({
+        lead_month:r.lead_month,
+        booking_month:r.booking_month,
+        lead_month_order:lmo2,
+        booking_month_order:bmo,
+        d,
+        isRetailed:inc
+      });
+    }
+    console.group('[Ather Diag 3] joinREData — d distribution (matched/booked rows only)');
+    console.log('Retail Master rows in retailRows:',retailRows.length,'| Matched leads (isBooked):',matched);
+    console.log('d distribution:',JSON.stringify(dDist));
+    console.log('Final attributed retails (d in [0,2]):',finalRetailed);
+    console.table(samples);
+    console.groupEnd();
+  }
+  // --- END DIAG 3 ---
   return{rows:joined,diagnostics:{
     leadTotalRows:leadDiag.totalRows,leadIncluded:leadDiag.included,leadUniqueIds:leadDiag.uniqueIds,leadDupIds:leadDiag.dupIds,
     leadExcludedBeforeCutoff:leadDiag.excludedBeforeCutoff,leadExcludedInvalidDate:leadDiag.excludedInvalidDate,
