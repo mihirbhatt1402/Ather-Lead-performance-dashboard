@@ -960,8 +960,62 @@ function joinREData(leadResult,retailResult){
       });
       console.groupEnd();
     }
-    // Save for in-page panel
-    stateRetailSummary={totalL,totalR,rows:sorted.map(([st,v])=>({state:st,l:v.l,r:v.r}))};
+    // Save for in-page panel and global QA access
+    const stateRows=sorted.map(([st,v])=>({state:st,l:v.l,r:v.r}));
+    stateRetailSummary={totalL,totalR,rows:stateRows};
+    // Expose full QA data globally so browser console can verify without DevTools digging
+    const _retailedLeads=[];
+    for(const r of joined){
+      if(!r.isBooked||!r.booking_month||!r.lead_month)continue;
+      const d=atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month);
+      if(d>=0&&d<=2&&ATHER_SCOPE_MODELS.has(canonPurMdl(r.purchasedModel||''))){
+        _retailedLeads.push({opty_id:r.opty_id,state:r.state,source:r.source,lead_month:r.lead_month,booking_month:r.booking_month,purchased_model:canonPurMdl(r.purchasedModel||''),d});
+      }
+    }
+    window.__ATHER_QA__={
+      totalLeads:totalL,
+      totalRetail:totalR,
+      uniqueStates:stateRows.length,
+      unknownLeads:(stateRows.find(r=>r.state==='Unknown')||{l:0}).l,
+      unknownRetail:(stateRows.find(r=>r.state==='Unknown')||{r:0}).r,
+      stateLeadSum:stateRows.reduce((a,r)=>a+r.l,0),
+      stateRetailSum:stateRows.reduce((a,r)=>a+r.r,0),
+      stateRows,
+      retailedLeads:_retailedLeads,
+      report(){
+        const q=window.__ATHER_QA__;
+        console.log('══════════════════════════════════════════════════════');
+        console.log('  ATHER DASHBOARD — QA VALIDATION REPORT');
+        console.log('══════════════════════════════════════════════════════');
+        console.log('Total Leads            : '+q.totalLeads+' (expected 48250)  '+(q.totalLeads===48250?'✓':'✗ MISMATCH'));
+        console.log('Total Retail           : '+q.totalRetail+' (expected 13)     '+(q.totalRetail===13?'✓':'✗ MISMATCH'));
+        console.log('Unknown Leads          : '+q.unknownLeads+(q.unknownLeads===0?' ✓ NONE':'  ✗ PRESENT'));
+        console.log('Unknown Retail         : '+q.unknownRetail+(q.unknownRetail===0?' ✓ NONE':'  ✗ PRESENT'));
+        console.log('Unique States          : '+q.uniqueStates);
+        console.log('State Lead Sum         : '+q.stateLeadSum+' '+(q.stateLeadSum===q.totalLeads?'✓ matches Total Leads':'✗ MISMATCH'));
+        console.log('State Retail Sum       : '+q.stateRetailSum+' '+(q.stateRetailSum===q.totalRetail?'✓ matches Total Retail':'✗ MISMATCH'));
+        const dupCheck=q.retailedLeads.length===new Set(q.retailedLeads.map(r=>r.opty_id)).size;
+        console.log('Retail Duplicate Check : '+q.retailedLeads.length+' records, '+(dupCheck?'✓ no duplicates':'✗ DUPLICATES FOUND'));
+        console.log('State Mapping Source   : Lead Master → State column (pre-detected key)');
+        const pass=q.totalLeads===48250&&q.totalRetail===13&&q.unknownLeads===0&&q.stateLeadSum===q.totalLeads&&q.stateRetailSum===q.totalRetail&&dupCheck;
+        console.log('──────────────────────────────────────────────────────');
+        console.log('Overall Status         : '+(pass?'✓ PASS':'✗ FAIL'));
+        console.log('══════════════════════════════════════════════════════');
+        console.log('\nTop 10 States (by leads):');
+        console.log('State'.padEnd(32)+'Leads'.padStart(8)+'Retail'.padStart(8)+'L2R%'.padStart(8));
+        q.stateRows.slice(0,10).forEach(r=>{
+          const pct=r.l>0?(r.r/r.l*100).toFixed(2)+'%':'—';
+          console.log(r.state.padEnd(32)+String(r.l).padStart(8)+String(r.r).padStart(8)+pct.padStart(8));
+        });
+        console.log('\nRetailed leads ('+q.retailedLeads.length+' records):');
+        console.log('opty_id | state | source | lead_month | booking_month | purchased_model | d');
+        q.retailedLeads.forEach(r=>{
+          console.log(r.opty_id+' | '+r.state+' | '+r.source+' | '+r.lead_month+' | '+r.booking_month+' | '+r.purchased_model+' | d='+r.d);
+        });
+        return pass?'PASS':'FAIL';
+      }
+    };
+    console.log('[Ather QA] Data ready. Run: window.__ATHER_QA__.report()');
     console.groupEnd();
   }
   // --- END DIAG 7 ---
