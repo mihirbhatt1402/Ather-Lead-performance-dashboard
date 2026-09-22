@@ -407,6 +407,14 @@ function normalizeAtherMonth(s){
   // Mon-YY format (e.g. "Aug-26" → "Aug'2026")
   const m5=s.match(/^([A-Za-z]{3})-(\d{2})$/);
   if(m5){const mi=MONTH_NAMES.findIndex(n=>n.toLowerCase()===m5[1].toLowerCase());if(mi>=0)return MONTH_NAMES[mi]+"'"+(2000+parseInt(m5[2]));}
+  // Mon-YYYY format (e.g. "Sep-2026" → "Sep'2026")
+  const m6=s.match(/^([A-Za-z]{3,})-(\d{4})$/);
+  if(m6){const mi=MONTH_NAMES.findIndex(n=>n.toLowerCase()===m6[1].toLowerCase().slice(0,3));if(mi>=0)return MONTH_NAMES[mi]+"'"+m6[2];}
+  // DD Mon YYYY format (e.g. "20 Sep 2026", "20 September 2026")
+  const m7=s.match(/^\d{1,2}\s+([A-Za-z]{3,9})\s+(\d{4})$/);
+  if(m7){const mi=MONTH_NAMES.findIndex(n=>n.toLowerCase()===m7[1].toLowerCase().slice(0,3));if(mi>=0)return MONTH_NAMES[mi]+"'"+m7[2];}
+  // Excel serial date (e.g. 45840 → date)
+  if(/^\d+(\.\d+)?$/.test(s)){const serial=parseFloat(s);if(serial>30000&&serial<60000){const d2=new Date(Date.UTC(1899,11,30));d2.setUTCDate(d2.getUTCDate()+Math.floor(serial));return MONTH_NAMES[d2.getUTCMonth()]+"'"+d2.getUTCFullYear();}}
   return s;
 }
 
@@ -744,6 +752,29 @@ function joinREData(leadResult,retailResult){
       verifiedDealer:lr.verifiedDealer||'',dealerId:lr.dealerId||'',oemCrmId:lr.oemCrmId||'',
       dealerName:lr.dealerName||'',enquiryId:lr.enquiryId||'',utmCampaign:lr.utmCampaign||'',statusName:lr.statusName||''};
   });
+  // --- TEMPORARY RETAIL DIAGNOSTICS (console only) ---
+  {
+    const dDist={lt0:0,eq0:0,eq1:0,eq2:0,eq3:0,gt3:0};
+    const samples=[];
+    let finalRetailed=0;
+    for(const r of joined){
+      if(!r.isBooked)continue;
+      const d=atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month);
+      if(d<0)dDist.lt0++;else if(d===0)dDist.eq0++;else if(d===1)dDist.eq1++;else if(d===2)dDist.eq2++;else if(d===3)dDist.eq3++;else dDist.gt3++;
+      const inc=(d>=0&&d<=2);
+      if(inc)finalRetailed++;
+      if(samples.length<5)samples.push({leadId:r.opty_id,lead_month:r.lead_month,booking_month:r.booking_month,d,included:inc});
+    }
+    console.group('[Ather Retail Diagnostics]');
+    console.log('Retail Master rows loaded:',retailRows.length);
+    console.log('Valid retail sourceLeadIds:',retailKeySet.size);
+    console.log('Leads with matching retail (isBooked=true):',matched);
+    console.log('d distribution:',dDist);
+    console.log('Final attributed retails (d in [0,2]):',finalRetailed);
+    console.table(samples);
+    console.groupEnd();
+  }
+  // --- END TEMPORARY DIAGNOSTICS ---
   return{rows:joined,diagnostics:{
     leadTotalRows:leadDiag.totalRows,leadIncluded:leadDiag.included,leadUniqueIds:leadDiag.uniqueIds,leadDupIds:leadDiag.dupIds,
     leadExcludedBeforeCutoff:leadDiag.excludedBeforeCutoff,leadExcludedInvalidDate:leadDiag.excludedInvalidDate,
@@ -2353,24 +2384,6 @@ const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months
       gNR++;
       nrBySrc.set(r.source, (nrBySrc.get(r.source)||0)+1);
     }
-    // Pass 4: Enquiries — rawJoined records where webId ∈ {Direct Push, L1 Nurtured}, attributed by lead_month
-    const enqBySrc = new Map();
-    let gEnq = 0;
-    const rawJ = rawJoined || [];
-    const allS4  = !filters.sources   || filters.sources.size   === 0;
-    const allSt4 = !filters.states    || filters.states.size    === 0;
-    const allCt4 = !filters.cities    || filters.cities.size    === 0;
-    const allMd4 = !filters.models    || filters.models.size    === 0;
-    for (const r of rawJ) {
-      if (r.lead_month !== M) continue;
-      if (!ENQUIRY_CAT.has(String(r.webId||'').trim())) continue;
-      if (!allS4  && (filters.sources === FILTER_CLEARED || !filters.sources.has(r.source))) continue;
-      if (!allSt4 && (filters.states  === FILTER_CLEARED || !filters.states.has(r.state)))  continue;
-      if (!allCt4 && (filters.cities  === FILTER_CLEARED || !filters.cities.has(r.city)))   continue;
-      if (!allMd4 && (filters.models  === FILTER_CLEARED || !filters.models.has(r.model)))  continue;
-      gEnq++;
-      enqBySrc.set(r.source, (enqBySrc.get(r.source)||0)+1);
-    }
     if (gL === 0 && gR === 0 && gNR === 0) return null;
     const sorted = [...bySrc.entries()].sort((a,b) => b[1][0]-a[1][0]);
     const grand = fin(gL, gR);
@@ -2380,9 +2393,9 @@ const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months
         ce('div', { className:'section-title', style:{marginBottom:0} }, M),
         ce('div',{style:{display:'flex',gap:0}},
           ce(CsvBtn, { onClick:()=>{
-            const aoa=[['Source','Leads','Enquiries','Retail','L.Contrib%','L2R%','Non-Scope R']];
-            csvSorted.forEach(([src,[l,r]])=>{const tot=fin(l,r);aoa.push([src,tot.l,enqBySrc.get(src)||0,tot.r,gL>0?+(tot.l/gL*100).toFixed(1):0,+tot.l2r.toFixed(1),nrBySrc.get(src)||0]);});
-            aoa.push(['Grand Total',gL,gEnq,gR,100,gL>0?+(gR/gL*100).toFixed(1):0,gNR]);
+            const aoa=[['Source','Leads','Retail','L.Contrib%','L2R%','Non-Scope R']];
+            csvSorted.forEach(([src,[l,r]])=>{const tot=fin(l,r);aoa.push([src,tot.l,tot.r,gL>0?+(tot.l/gL*100).toFixed(1):0,+tot.l2r.toFixed(1),nrBySrc.get(src)||0]);});
+            aoa.push(['Grand Total',gL,gR,100,gL>0?+(gR/gL*100).toFixed(1):0,gNR]);
             exportCsv(aoa,'Ather_Source_'+M.replace(/[^a-z0-9]/gi,'_')+'.csv');
           }}),
           onDetailedCsv && ce(DetailedCsvBtn, { onClick:()=>onDetailedCsv('Source', M) })
@@ -2394,7 +2407,6 @@ const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months
             ce('tr', null,
               ce('th',{className:'left',style:{minWidth:160}},'Source'),
               ce('th',null,'Leads'),
-              ce('th',null,'Enquiries'),
               ce('th',null,'L.Contrib%'),
               ce('th',null,'Retail'),
               ce('th',null,'R.Contrib%'),
@@ -2408,7 +2420,6 @@ const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months
               return ce('tr',{key:src},
                 ce('td',{className:'label'},src),
                 ce('td',null,Nf(tot.l)),
-                ce('td',null,Nf(enqBySrc.get(src)||0)),
                 ce('td',null,gL>0?Pf(tot.l/gL*100):'—'),
                 ce('td',{style:{color:'#0891B2',fontWeight:700}},Nf(tot.r)),
                 ce('td',null,gR>0?Pf(tot.r/gR*100):'—'),
@@ -2419,7 +2430,6 @@ const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months
             ce('tr',{key:'gtotal',className:'total-row'},
               ce('td',{className:'label',style:{color:'#1A237E'}},'∑ Grand Total'),
               ce('td',null,Nf(grand.l)),
-              ce('td',null,Nf(gEnq)),
               ce('td',null,'100.0%'),
               ce('td',{style:{color:'#0891B2',fontWeight:700}},Nf(grand.r)),
               ce('td',null,'100.0%'),
@@ -2537,26 +2547,8 @@ const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months
       gNR2++;
       nrBySrc2.set(r.source, (nrBySrc2.get(r.source)||0)+1);
     }
-    // Pass 4 (cross-month): Enquiries — rawJoined where webId ∈ {Direct Push, L1 Nurtured}
-    const rawJ2 = rawJoined || [];
-    const enqBySrc2 = new Map();
-    let gEnq2 = 0;
-    const allS4b  = !filters.sources || filters.sources.size  === 0;
-    const allSt4b = !filters.states  || filters.states.size   === 0;
-    const allCt4b = !filters.cities  || filters.cities.size   === 0;
-    const allMd4b = !filters.models  || filters.models.size   === 0;
-    for (const r of rawJ2) {
-      if (!mSet.has(r.lead_month)) continue;
-      if (!ENQUIRY_CAT.has(String(r.webId||'').trim())) continue;
-      if (!allS4b  && (filters.sources === FILTER_CLEARED || !filters.sources.has(r.source))) continue;
-      if (!allSt4b && (filters.states  === FILTER_CLEARED || !filters.states.has(r.state)))  continue;
-      if (!allCt4b && (filters.cities  === FILTER_CLEARED || !filters.cities.has(r.city)))   continue;
-      if (!allMd4b && (filters.models  === FILTER_CLEARED || !filters.models.has(r.model)))  continue;
-      gEnq2++;
-      enqBySrc2.set(r.source, (enqBySrc2.get(r.source)||0)+1);
-    }
     const sorted = [...bySrc.entries()].sort((a,b)=>b[1][0]-a[1][0]);
-    return { l:gL, r:gR, l2r:gL>0?gR/gL*100:0, sorted, nrBySrc:nrBySrc2, gNR:gNR2, enqBySrc:enqBySrc2, gEnq:gEnq2 };
+    return { l:gL, r:gR, l2r:gL>0?gR/gL*100:0, sorted, nrBySrc:nrBySrc2, gNR:gNR2 };
   }, [sm, csm, univ, pmsm, pm_csm, smLead, univLead, csmLead, maps, filters, getLR, hasCityF, months, nsRetailRows, rawJoined]);
 
   return ce('div', {className:'fade-up'},
@@ -2565,9 +2557,9 @@ const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months
         ce('div', { className:'section-title', style:{marginBottom:0} }, '∑ All Months — Source Summary'),
         ce('div',{style:{display:'flex',gap:0}},
           ce(CsvBtn, { onClick:()=>{
-            const aoa=[['Source','Leads','Enquiries','Retail','L.Contrib%','L2R%','Non-Scope R']];
-            crossMonthTotals.sorted.forEach(([src,[l,r]])=>{const tot=fin(l,r);aoa.push([src,tot.l,crossMonthTotals.enqBySrc.get(src)||0,tot.r,crossMonthTotals.l>0?+(tot.l/crossMonthTotals.l*100).toFixed(1):0,+tot.l2r.toFixed(1),crossMonthTotals.nrBySrc.get(src)||0]);});
-            aoa.push(['Grand Total',crossMonthTotals.l,crossMonthTotals.gEnq,crossMonthTotals.r,100,+crossMonthTotals.l2r.toFixed(1),crossMonthTotals.gNR]);
+            const aoa=[['Source','Leads','Retail','L.Contrib%','L2R%','Non-Scope R']];
+            crossMonthTotals.sorted.forEach(([src,[l,r]])=>{const tot=fin(l,r);aoa.push([src,tot.l,tot.r,crossMonthTotals.l>0?+(tot.l/crossMonthTotals.l*100).toFixed(1):0,+tot.l2r.toFixed(1),crossMonthTotals.nrBySrc.get(src)||0]);});
+            aoa.push(['Grand Total',crossMonthTotals.l,crossMonthTotals.r,100,+crossMonthTotals.l2r.toFixed(1),crossMonthTotals.gNR]);
             exportCsv(aoa,'Ather_Source_AllMonths.csv');
           }}),
           onDetailedCsv && ce(DetailedCsvBtn, { onClick:()=>onDetailedCsv('Source', null) })
@@ -2577,7 +2569,7 @@ const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months
         ce('table', null,
           ce('thead', null, ce('tr', null,
             ce('th',{className:'left',style:{minWidth:160}},'Source'),
-            ce('th',null,'Leads'), ce('th',null,'Enquiries'), ce('th',null,'L.Contrib%'),
+            ce('th',null,'Leads'), ce('th',null,'L.Contrib%'),
             ce('th',null,'Retail'), ce('th',null,'R.Contrib%'),
             ce('th',null,'L2R%'),
             ce('th',{style:{color:'#fff'}},'Non-Scope R'),
@@ -2588,7 +2580,6 @@ const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months
               return ce('tr',{key:src},
                 ce('td',{className:'label'},src),
                 ce('td',null,Nf(tot.l)),
-                ce('td',null,Nf(crossMonthTotals.enqBySrc.get(src)||0)),
                 ce('td',null,crossMonthTotals.l>0?Pf(tot.l/crossMonthTotals.l*100):'—'),
                 ce('td',{style:{color:'#0891B2',fontWeight:700}},Nf(tot.r)),
                 ce('td',null,crossMonthTotals.r>0?Pf(tot.r/crossMonthTotals.r*100):'—'),
@@ -2599,7 +2590,6 @@ const SourceTab = React.memo(function SourceTab({ data, rawData, filters, months
             ce('tr',{key:'gtotal',className:'total-row'},
               ce('td',{className:'label',style:{color:'#1A237E'}},'∑ Grand Total'),
               ce('td',null,Nf(crossMonthTotals.l)),
-              ce('td',null,Nf(crossMonthTotals.gEnq)),
               ce('td',null,'100.0%'),
               ce('td',{style:{color:'#0891B2',fontWeight:700}},Nf(crossMonthTotals.r)),
               ce('td',null,'100.0%'),
