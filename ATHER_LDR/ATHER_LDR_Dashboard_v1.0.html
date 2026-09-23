@@ -695,7 +695,8 @@ function parseAtherLeadRows(raw){
   [..._stUniq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,35).forEach(([v,c])=>console.log('  "'+v+'" → '+c+' rows'));
   console.groupEnd();}
   // --- END DIAG 6 ---
-  return{rows,diagnostics:{totalRows:raw.length,included:rows.length,uniqueIds,dupIds:rows.length-uniqueIds,excludedBeforeCutoff,excludedInvalidDate,earliestDate,latestDate,detectedDateCol,sampleDateValues,allLeadCols,statusNameRawKey,statusNameNonBlankCount,webIdDetectedCol:webIdRawKey||'(not detected)'}};
+  const stateNonBlankCount=rows.filter(r=>r.state&&r.state.trim()!==''&&r.state!=='Unknown').length;
+  return{rows,diagnostics:{totalRows:raw.length,included:rows.length,uniqueIds,dupIds:rows.length-uniqueIds,excludedBeforeCutoff,excludedInvalidDate,earliestDate,latestDate,detectedDateCol,sampleDateValues,allLeadCols,statusNameRawKey,statusNameNonBlankCount,stateColKey:stateColKey||null,stateNonBlankCount,webIdDetectedCol:webIdRawKey||'(not detected)'}};
 }
 
 function parseAtherRetailRows(raw){
@@ -759,7 +760,7 @@ function parseAtherRetailRows(raw){
     if(!isAtherBrand){excludedBrand++;continue;}
     reBrandCount++;
     const sourceLeadId=get(r,['sourcelead id','sourcelead_id','source lead id','source_lead_id','sourceleadid','lead id','leadid','optyid','opty id','opty_id']);
-    const pmRaw=get(r,['performance month','performancemonth','performance_month','retail month','retailmonth','month']);
+    const pmRaw=get(r,['performance month','performancemonth','performance_month','retail month','retailmonth','booking month','booking_month','bookingmonth','month']);
     const performanceMonth=normalizeAtherMonth(pmRaw);
     if(_pmDiag.length<10&&pmRaw)_pmDiag.push({raw:pmRaw,normalized:performanceMonth,order:atherMonthOrder(performanceMonth)});
     if(!sourceLeadId||!performanceMonth){excludedKey++;continue;}
@@ -941,7 +942,7 @@ function joinREData(leadResult,retailResult){
     const sorted=[...stateMap.entries()].sort((a,b)=>b[1].l-a[1].l);
     console.group('[Ather Diag 7] STATE × RETAIL RECONCILIATION (all leads, no filters)');
     console.log('TOTALS → Leads='+totalL+' | Retail='+totalR);
-    console.log('SUM check: expected Leads=48250, Retail=13');
+    console.log('TOTALS — Leads: '+totalL+' | Retail: '+totalR+' (computed from runtime data)');
     console.log('─────────────────────────────────────────────────');
     console.log(('State').padEnd(30)+('Leads').padStart(8)+('Retail').padStart(8)+('L2R%').padStart(8));
     sorted.forEach(([st,v])=>{
@@ -1735,14 +1736,23 @@ const FILTER_CLEARED = Object.freeze(new Set(['\x00']));
 
 // Case-insensitive canonical mapping: Retail Master raw purchased/retail model → dashboard display name
 const _RE_PUR_MDL_CANONICAL_LOWER = {
-  // Rizta variants
-  'rizta':'Ather Rizta','ather rizta':'Ather Rizta','rizta s':'Ather Rizta','ather rizta s':'Ather Rizta',
+  // Rizta variants (base + LR/HR suffix variants)
+  'rizta':'Ather Rizta','ather rizta':'Ather Rizta',
+  'rizta s':'Ather Rizta','ather rizta s':'Ather Rizta',
   'rizta z':'Ather Rizta','ather rizta z':'Ather Rizta',
-  // 450X variants
+  'rizta s lr':'Ather Rizta','ather rizta s lr':'Ather Rizta',
+  'rizta s hr':'Ather Rizta','ather rizta s hr':'Ather Rizta',
+  'rizta z lr':'Ather Rizta','ather rizta z lr':'Ather Rizta',
+  'rizta z hr':'Ather Rizta','ather rizta z hr':'Ather Rizta',
+  // 450X variants (base + LR/HR suffix variants)
   '450x':'Ather 450X','ather 450x':'Ather 450X','450 x':'Ather 450X','ather 450 x':'Ather 450X',
   'ather 450x gen 3':'Ather 450X','450x gen 3':'Ather 450X',
-  // 450S variants
+  '450x lr':'Ather 450X','ather 450x lr':'Ather 450X',
+  '450x hr':'Ather 450X','ather 450x hr':'Ather 450X',
+  // 450S variants (base + LR/HR suffix variants)
   '450s':'Ather 450S','ather 450s':'Ather 450S','450 s':'Ather 450S','ather 450 s':'Ather 450S',
+  '450s lr':'Ather 450S','ather 450s lr':'Ather 450S',
+  '450s hr':'Ather 450S','ather 450s hr':'Ather 450S',
   // 450 Apex variants
   '450 apex':'Ather 450 Apex','ather 450 apex':'Ather 450 Apex',
   '450apex':'Ather 450 Apex','ather 450apex':'Ather 450 Apex',
@@ -4464,138 +4474,195 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
       console.log('[ATHER QA] Retail Till Date:',retailResult.maxRetailDate?formatRetailDate(retailResult.maxRetailDate):'— (no valid retail dates found)');
       console.log('[ATHER QA] Booked with both dates (bdm eligible):',joined.filter(r=>r.isBooked&&r.leadDate&&r.retailDate).length);
       console.log('[ATHER QA] BDM rows:',payload.bdm.length);
-      // ── [ATHER FINAL QA] Status_Name pipeline diagnostic ──────────────────────────
-      (function atherFinalQAInline(j,ld){
-        const fq=s=>'[ATHER FINAL QA] '+s;
-        const snTotal=j.length;
-        const snNonBlank=j.filter(r=>r.statusName&&r.statusName.trim()!=='').length;
-        const snBlank=snTotal-snNonBlank;
-        const snRA=j.filter(r=>String(r.statusName||'').trim().toLowerCase()==='retail attribution').length;
-        const snNonRA=snTotal-snRA;
-        const snNoRetail=j.filter(r=>!r.isBooked).length;
-        const snNoRetailBlank=j.filter(r=>!r.isBooked&&(!r.statusName||r.statusName.trim()===''));
-        const snRAWithFields=j.filter(r=>String(r.statusName||'').trim().toLowerCase()==='retail attribution'&&r.purchasedModel&&r.booking_month).length;
-        const snRAMissing=snRA-snRAWithFields;
-        const badNonRA=j.filter(r=>String(r.statusName||'').trim().toLowerCase()!=='retail attribution'&&(r.purchasedModel||r.booking_month||r.retailDate));
-        const dupIds=j.map(r=>r.opty_id);const dupSet=new Set(dupIds);const dupCount=dupIds.length-dupSet.size;
-        const dist=new Map();j.forEach(r=>{const v=r.statusName||'(blank)';dist.set(v,(dist.get(v)||0)+1);});
-        console.log('');
-        console.group(fq('─────────────────────────────────────────'));
-        console.log(fq('Lead Master detected Status_Name column:'),ld.statusNameRawKey||'❌ NOT DETECTED');
-        console.log(fq('Total Lead Master rows (post-cutoff):'),snTotal);
-        console.log(fq('Rows with non-blank Status_Name (parse):'),ld.statusNameNonBlankCount,'/',ld.included);
-        console.log(fq('Rows with blank Status_Name (parse):'),ld.included-ld.statusNameNonBlankCount);
-        console.log(fq('Joined rows:'),snTotal);
-        console.log(fq('Joined rows with non-blank statusName:'),snNonBlank);
-        console.log(fq('Joined rows with BLANK statusName:'),snBlank,snBlank?'⚠':'✓');
-        console.log(fq('Retail Attribution count:'),snRA);
-        console.log(fq('Non-Retail Attribution count:'),snNonRA);
-        console.log(fq('Retail Attribution rows with retail fields populated:'),snRAWithFields,'/',snRA,snRAMissing?'(⚠ '+snRAMissing+' missing retail fields — no Retail Master match)':'✓');
-        console.log(fq('Non-Retail rows with retail fields (MUST BE 0):'),badNonRA.length,badNonRA.length?'⚠ LEAK':'✓');
-        if(badNonRA.length)badNonRA.slice(0,3).forEach(r=>console.log('  leak:',r.opty_id,'sn="'+r.statusName+'" pm="'+r.purchasedModel+'"'));
-        console.log(fq('Non-retail leads (no Retail Master record):'),snNoRetail);
-        console.log(fq('Non-retail leads with BLANK statusName (8):'),snNoRetailBlank.length,snNoRetailBlank.length?'⚠ UNEXPECTED':'✓');
-        if(snNoRetailBlank.length)snNoRetailBlank.slice(0,3).forEach(r=>console.log('  blank:',r.opty_id));
-        console.log(fq('Duplicate opty_id count:'),dupCount,dupCount?'⚠':'✓');
-        console.log('');
-        console.log(fq('Distinct statusName values:'));
-        [...dist.entries()].sort((a,b)=>b[1]-a[1]).forEach(([v,c])=>console.log('  "'+v+'" →',c,'rows'));
-        console.log('');
-        console.log(fq('── SAMPLE: 5 Retail Attribution leads ──'));
-        console.log('opty_id | statusName | purchasedModel | booking_month | callType | retailDate');
-        j.filter(r=>String(r.statusName||'').trim().toLowerCase()==='retail attribution').slice(0,5)
-          .forEach(r=>console.log(r.opty_id+' | "'+r.statusName+'" | "'+r.purchasedModel+'" | "'+r.booking_month+'" | "'+r.callType+'" | '+(r.retailDate?formatRetailDate(r.retailDate):'—')));
-        console.log('');
-        console.log(fq('── SAMPLE: 5 Non-Retail Attribution leads ──'));
-        console.log('opty_id | statusName | purchasedModel | booking_month | callType | retailDate');
-        j.filter(r=>String(r.statusName||'').trim().toLowerCase()!=='retail attribution').slice(0,5)
-          .forEach(r=>console.log(r.opty_id+' | "'+r.statusName+'" | "'+r.purchasedModel+'" | "'+r.booking_month+'" | "'+r.callType+'" | '+(r.retailDate?formatRetailDate(r.retailDate):'—')));
-        const allClear=!snBlank&&!badNonRA.length&&!dupCount;
-        console.log('');
-        console.log(fq('ALL CLEAR: '+(allClear?'✓ YES':'⚠ SEE ABOVE')));
+      // ── [ATHER COMPREHENSIVE QA] ────────────────────────────────────────────────────
+      (function atherComprehensiveQA(leadRaw,retailRaw,joined,payload,leadResult,retailResult){
+        const p=s=>'[ATHER PIPELINE] '+s;
+        const jq=s=>'[ATHER JOIN] '+s;
+        const rf=s=>'[ATHER RETAIL FUNNEL] '+s;
+        const sp=s=>'[ATHER STATE PIPELINE] '+s;
+        const pl=s=>'[ATHER PAYLOAD] '+s;
+        const qa=s=>'[ATHER QA] '+s;
+
+        // ── [ATHER PIPELINE] ──
+        console.group('[ATHER PIPELINE] Column detection & raw samples');
+        const lSample=leadRaw&&leadRaw[0]?leadRaw[0]:{};
+        const rSample=retailRaw&&retailRaw[0]?retailRaw[0]:{};
+        const lKeys=Object.keys(lSample).join(' | ');
+        const rKeys=Object.keys(rSample).join(' | ');
+        console.log(p('Lead Master columns (row 0 keys): '+lKeys));
+        console.log(p('Retail Master columns (row 0 keys): '+rKeys));
+        console.log(p('Lead Master raw rows: '+(leadRaw?leadRaw.length:0)));
+        console.log(p('Retail Master raw rows: '+(retailRaw?retailRaw.length:0)));
+        const ldDiag=leadResult.diagnostics;
+        console.log(p('Lead Master parsed/included: '+ldDiag.included+' | excluded: '+(ldDiag.excludedBeforeCutoff+ldDiag.excludedInvalidDate)+' | total: '+ldDiag.totalRows));
+        console.log(p('Retail Master parsed rows: '+(retailResult.rows?retailResult.rows.length:0)));
+        console.log(p('Lead state col key: '+(leadResult.diagnostics.stateColKey||'❌ NOT DETECTED')));
+        console.log(p('── 5 Lead Master raw samples ──'));
+        (leadRaw||[]).slice(0,5).forEach((r,i)=>{
+          const get=k=>(r[k]!==undefined?r[k]:'—');
+          const oK=Object.keys(r).find(k=>['opty id','opty_id','opportunity id','lead id'].includes(k.toLowerCase().trim()))||'';
+          const mK=Object.keys(r).find(k=>['lead month','lead_month','leadmonth'].includes(k.toLowerCase().trim()))||'';
+          const stK=Object.keys(r).find(k=>['state','lead state'].includes(k.toLowerCase().trim()))||Object.keys(r).find(k=>k.toLowerCase().includes('state'))||'';
+          console.log('  L'+i+': opty_id='+get(oK)+' lead_month='+get(mK)+' state='+get(stK));
+        });
+        console.log(p('── 5 Retail Master raw samples ──'));
+        (retailRaw||[]).slice(0,5).forEach((r,i)=>{
+          const get=k=>(r[k]!==undefined?r[k]:'—');
+          const lidK=Object.keys(r).find(k=>['lead id','lead_id'].includes(k.toLowerCase().trim()))||'';
+          const pmK=Object.keys(r).find(k=>['purchased model','purchasedmodel','purchased_model','model'].includes(k.toLowerCase().trim()))||'';
+          const bmK=Object.keys(r).find(k=>['booking month','booking_month','bookingmonth','performance month','retail month'].includes(k.toLowerCase().trim()))||'';
+          const srK=Object.keys(r).find(k=>['sr','sr2','sr3','sr_2','sr_3'].includes(k.toLowerCase().trim()))||'';
+          console.log('  R'+i+': lead_id='+get(lidK)+' model='+get(pmK)+' booking_month='+get(bmK)+(srK?' sr='+get(srK):''));
+        });
         console.groupEnd();
-      })(joined,ld);
-      // ── Expose window.atherFinalQA() and window.atherDetailedCsvPreview() for DevTools ──
-      window.atherFinalQA=(function(j,ld){
-        return function(){
-          const fq=s=>'[ATHER FINAL QA] '+s;
-          const snTotal=j.length;
-          const snNonBlank=j.filter(r=>r.statusName&&r.statusName.trim()!=='').length;
-          const snBlank=snTotal-snNonBlank;
-          const snRA=j.filter(r=>String(r.statusName||'').trim().toLowerCase()==='retail attribution').length;
-          const snNonRA=snTotal-snRA;
-          const snNoRetail=j.filter(r=>!r.isBooked).length;
-          const snNoRetailBlank=j.filter(r=>!r.isBooked&&(!r.statusName||r.statusName.trim()===''));
-          const snRAWithFields=j.filter(r=>String(r.statusName||'').trim().toLowerCase()==='retail attribution'&&r.purchasedModel&&r.booking_month).length;
-          const badNonRA=j.filter(r=>String(r.statusName||'').trim().toLowerCase()!=='retail attribution'&&(r.purchasedModel||r.booking_month||r.retailDate));
-          const dupIds=j.map(r=>r.opty_id);const dupCount=dupIds.length-new Set(dupIds).size;
-          const dist=new Map();j.forEach(r=>{const v=r.statusName||'(blank)';dist.set(v,(dist.get(v)||0)+1);});
-          console.log('');
-          console.group(fq('LIVE DATA REPORT'));
-          console.log(fq('Status_Name column:'),ld.statusNameRawKey||'❌ NOT DETECTED');
-          console.log(fq('Lead Master rows (post-cutoff):'),snTotal);
-          console.log(fq('Rows non-blank Status_Name (parse):'),ld.statusNameNonBlankCount,'/',ld.included);
-          console.log(fq('Rows blank Status_Name (parse):'),ld.included-ld.statusNameNonBlankCount);
-          console.log(fq('Joined rows:'),snTotal);
-          console.log(fq('Joined non-blank statusName:'),snNonBlank);
-          console.log(fq('Joined BLANK statusName:'),snBlank,snBlank?'⚠':'✓');
-          console.log(fq('Retail Attribution rows:'),snRA);
-          console.log(fq('Non-Retail Attribution rows:'),snNonRA);
-          console.log(fq('RA rows with retail fields:'),snRAWithFields,'/',snRA);
-          console.log(fq('Non-RA rows with retail fields (MUST=0):'),badNonRA.length,badNonRA.length?'⚠ LEAK':'✓');
-          if(badNonRA.length)badNonRA.slice(0,5).forEach(r=>console.log('  leak:',r.opty_id,'sn="'+r.statusName+'"'));
-          console.log(fq('Non-retail leads (no retail record):'),snNoRetail);
-          console.log(fq('Non-retail leads with blank statusName:'),snNoRetailBlank.length,snNoRetailBlank.length?'⚠':'✓');
-          console.log(fq('Duplicate opty_id count:'),dupCount,dupCount?'⚠':'✓');
-          console.log('');
-          console.log(fq('Distinct statusName values:'));
-          [...dist.entries()].sort((a,b)=>b[1]-a[1]).forEach(([v,c])=>console.log('  "'+v+'" →',c));
-          console.log('');
-          console.log(fq('── 5 Retail Attribution samples ──'));
-          j.filter(r=>String(r.statusName||'').trim().toLowerCase()==='retail attribution').slice(0,5)
-            .forEach(r=>console.log(r.opty_id,'| sn="'+r.statusName+'" | pm="'+r.purchasedModel+'" | bm="'+r.booking_month+'" | ct="'+r.callType+'" | rd='+(r.retailDate?formatRetailDate(r.retailDate):'—')));
-          console.log(fq('── 5 Non-RA samples ──'));
-          j.filter(r=>String(r.statusName||'').trim().toLowerCase()!=='retail attribution').slice(0,5)
-            .forEach(r=>console.log(r.opty_id,'| sn="'+r.statusName+'" | pm="'+r.purchasedModel+'" | bm="'+r.booking_month+'" | ct="'+r.callType+'" | rd='+(r.retailDate?formatRetailDate(r.retailDate):'—')));
-          console.log('');
-          console.log(fq('ALL CLEAR: '+((!snBlank&&!badNonRA.length&&!dupCount)?'✓ YES':'⚠ SEE ABOVE')));
-          console.groupEnd();
+
+        // ── [ATHER JOIN] ──
+        console.group('[ATHER JOIN] State coverage & joined row samples');
+        const stPop=joined.filter(r=>r.state&&r.state.trim()!==''&&r.state!=='Unknown').length;
+        const stUnk=joined.filter(r=>!r.state||r.state.trim()===''||r.state==='Unknown').length;
+        console.log(jq('Joined rows: '+joined.length));
+        console.log(jq('State populated: '+stPop+' | State Unknown/blank: '+stUnk+(stUnk===joined.length?' ⚠ ALL UNKNOWN':'')+(stPop===joined.length?' ✓ ALL POPULATED':'')));
+        console.log(jq('── 10 joined row samples ──'));
+        console.log('opty_id | lead_month | state | isBooked | purchasedModel | booking_month | callType');
+        joined.slice(0,10).forEach(r=>console.log(
+          (r.opty_id||'—')+' | '+(r.lead_month||'—')+' | '+(r.state||'—')+' | '+
+          (r.isBooked?'Y':'N')+' | '+(r.purchasedModel||'—')+' | '+(r.booking_month||'—')+' | '+(r.callType||'—')
+        ));
+        console.groupEnd();
+
+        // ── [ATHER RETAIL FUNNEL] ──
+        console.group('[ATHER RETAIL FUNNEL] Full funnel with d-distribution');
+        const booked=joined.filter(r=>r.isBooked);
+        const bookedWithMonths=booked.filter(r=>r.booking_month&&r.lead_month);
+        const bookedMissingMonths=booked.filter(r=>!r.booking_month||!r.lead_month);
+        const dMap=new Map();
+        bookedWithMonths.forEach(r=>{
+          const d=atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month);
+          dMap.set(d,(dMap.get(d)||0)+1);
+        });
+        const dNeg=bookedWithMonths.filter(r=>(atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month))<0).length;
+        const d0=dMap.get(0)||0;const d1=dMap.get(1)||0;const d2=dMap.get(2)||0;
+        const dGte3=bookedWithMonths.filter(r=>(atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month))>=3).length;
+        const eligible=bookedWithMonths.filter(r=>{const d=atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month);return d>=0&&d<=2;});
+        const inScope=eligible.filter(r=>ATHER_SCOPE_MODELS.has(canonPurMdl(r.purchasedModel||'')));
+        const outScope=eligible.filter(r=>!ATHER_SCOPE_MODELS.has(canonPurMdl(r.purchasedModel||'')));
+        console.log(rf('All joined rows: '+joined.length));
+        console.log(rf('isBooked=true: '+booked.length));
+        console.log(rf('Booked WITH both months: '+bookedWithMonths.length));
+        console.log(rf('Booked MISSING months: '+bookedMissingMonths.length+(bookedMissingMonths.length?' ⚠':' ✓')));
+        console.log(rf('d distribution: d<0='+dNeg+' | d=0: '+d0+' | d=1: '+d1+' | d=2: '+d2+' | d>=3: '+dGte3));
+        console.log(rf('Eligible (d=0,1,2): '+eligible.length));
+        console.log(rf('In-scope (ATHER_SCOPE_MODELS): '+inScope.length));
+        console.log(rf('Out-of-scope models: '+outScope.length));
+        if(outScope.length){
+          const osMdl=new Map();outScope.forEach(r=>{const m=r.purchasedModel||'(blank)';osMdl.set(m,(osMdl.get(m)||0)+1);});
+          [...osMdl.entries()].sort((a,b)=>b[1]-a[1]).forEach(([m,c])=>console.log(rf('  out-scope model: "'+m+'" → '+c)));
+        }
+        // Model breakdown within in-scope
+        const mdlBreak=new Map();inScope.forEach(r=>{const m=canonPurMdl(r.purchasedModel||'');mdlBreak.set(m,(mdlBreak.get(m)||0)+1);});
+        console.log(rf('In-scope model breakdown:'));
+        [...mdlBreak.entries()].sort((a,b)=>b[1]-a[1]).forEach(([m,c])=>console.log(rf('  '+m+' → '+c)));
+        // KONARC check
+        const konarcSR2=inScope.filter(r=>String(r.callType||'').trim().toUpperCase()==='SR2').length;
+        const konarcSR3=inScope.filter(r=>String(r.callType||'').trim().toUpperCase()==='SR3').length;
+        console.log(rf('KONARC SR2 in in-scope (MUST=0): '+konarcSR2+(konarcSR2?' ⚠ LEAK':'  ✓')));
+        console.log(rf('KONARC SR3 in in-scope (MUST=0): '+konarcSR3+(konarcSR3?' ⚠ LEAK':'  ✓')));
+        // Final retail count by isRetailedLead
+        const finalRetail=joined.filter(r=>isRetailedLead(r));
+        console.log(rf('Final retail (isRetailedLead): '+finalRetail.length));
+        console.log(rf('── All '+finalRetail.length+' final retail records ──'));
+        console.log('opty_id | lead_month | booking_month | d | model | callType | state');
+        finalRetail.forEach(r=>{
+          const d=atherMonthOrder(r.booking_month)-atherMonthOrder(r.lead_month);
+          console.log(
+            (r.opty_id||'—')+' | '+(r.lead_month||'—')+' | '+(r.booking_month||'—')+
+            ' | d='+d+' | '+(r.purchasedModel||'—')+' | '+(r.callType||'—')+' | '+(r.state||'—')
+          );
+        });
+        console.groupEnd();
+
+        // ── [ATHER STATE PIPELINE] ──
+        console.group('[ATHER STATE PIPELINE] State counts raw → joined → payload');
+        const rawStateNonBlank=leadResult.diagnostics.stateNonBlankCount||0;
+        const rawStateBlank=(leadResult.diagnostics.included||0)-(rawStateNonBlank);
+        console.log(sp('Lead Master parse — state non-blank: '+rawStateNonBlank+' | blank: '+rawStateBlank+' / '+leadResult.diagnostics.included));
+        const joinedStatePop=joined.filter(r=>r.state&&r.state.trim()!==''&&r.state!=='Unknown').length;
+        const joinedStateUnk=joined.length-joinedStatePop;
+        console.log(sp('Joined — state populated: '+joinedStatePop+' | Unknown/blank: '+joinedStateUnk));
+        const stm=payload.stm||[];
+        const stNames=payload.maps&&payload.maps.st?payload.maps.st:[];
+        console.log(sp('payload.maps.st length (state names): '+stNames.length));
+        const stPayload=new Map();
+        stm.forEach(row=>{const sti=row[0];const Ra=row[4]||0;if(Ra>0){const sn=stNames[sti]||('idx'+sti);stPayload.set(sn,(stPayload.get(sn)||0)+Ra);}});
+        const totalRaStm=stm.reduce((s,row)=>s+(row[4]||0),0);
+        console.log(sp('Total Ra in stm matrix: '+totalRaStm));
+        console.log(sp('Retail by state bucket (non-zero):'));
+        [...stPayload.entries()].sort((a,b)=>b[1]-a[1]).forEach(([s,c])=>console.log(sp('  "'+s+'" → '+c)));
+        const unknownRetail=stm.filter(row=>{const sn=stNames[row[0]]||'';return(sn===''||sn==='Unknown'||sn==='unknown')&&(row[4]||0)>0;}).reduce((s,row)=>s+(row[4]||0),0);
+        console.log(sp('Retail attributed to Unknown/blank state: '+unknownRetail+(unknownRetail?' ⚠':' ✓')));
+        console.groupEnd();
+
+        // ── [ATHER PAYLOAD] ──
+        console.group('[ATHER PAYLOAD] Tab matrix retail sums & samples');
+        const sm=payload.sm||[];const ltm=payload.ltm||[];const pmsm=payload.pmsm||[];const univ=payload.univ||[];
+        const totalRaSm=sm.reduce((s,row)=>s+(row[3]||0),0);
+        const totalRaLtm=ltm.reduce((s,row)=>s+(row[4]||0),0);
+        const totalRaPmsm=pmsm.reduce((s,row)=>s+(row[4]||0),0);
+        const totalRaUniv=univ.reduce((s,row)=>s+(row[6]||0),0);
+        console.log(pl('sm (Overview/Source)  Ra total: '+totalRaSm));
+        console.log(pl('stm (State Perf)      Ra total: '+totalRaStm));
+        console.log(pl('ltm (LT×Source)       Ra total: '+totalRaLtm));
+        console.log(pl('pmsm (Model Perf)     Ra total: '+totalRaPmsm));
+        console.log(pl('univ (Pivot)          Ra total: '+totalRaUniv));
+        console.log(pl('Central retail (isRetailedLead): '+finalRetail.length));
+        console.log(pl('── 10 payload sm samples ──'));
+        sm.slice(0,10).forEach(row=>console.log(pl('  sm row: ['+row.join(',')+']')));
+        console.groupEnd();
+
+        // ── [ATHER QA] Final report ──
+        console.group('[ATHER QA] ======================================== FINAL REPORT');
+        const centralR=finalRetail.length;
+        const tabMatch=totalRaSm===centralR&&totalRaStm===centralR&&totalRaLtm===centralR&&totalRaPmsm===centralR&&totalRaUniv===centralR;
+        const stateOk=joinedStatePop>0;
+        const konarcOk=konarcSR2===0&&konarcSR3===0;
+        const missingMonthOk=bookedMissingMonths.length===0;
+        console.log(qa('RETAIL PIPELINE'));
+        console.log(qa('  Joined rows:           '+joined.length));
+        console.log(qa('  isBooked:              '+booked.length));
+        console.log(qa('  d eligible (0-2):      '+eligible.length));
+        console.log(qa('  In-scope models:       '+inScope.length));
+        console.log(qa('  Final retail:          '+centralR));
+        console.log(qa('STATE PIPELINE'));
+        console.log(qa('  State col detected:    '+(leadResult.diagnostics.stateColKey?'YES ('+leadResult.diagnostics.stateColKey+')':'❌ NO')));
+        console.log(qa('  Leads state populated: '+joinedStatePop+' / '+joined.length));
+        console.log(qa('  Retail state Unknown:  '+unknownRetail+(unknownRetail?' ⚠':' ✓')));
+        console.log(qa('TAB RECONCILIATION (all must equal '+centralR+')'));
+        console.log(qa('  sm  (Overview/Source): '+totalRaSm+(totalRaSm===centralR?' ✓':' ⚠ MISMATCH')));
+        console.log(qa('  stm (State Perf):      '+totalRaStm+(totalRaStm===centralR?' ✓':' ⚠ MISMATCH')));
+        console.log(qa('  ltm (LT×Source):       '+totalRaLtm+(totalRaLtm===centralR?' ✓':' ⚠ MISMATCH')));
+        console.log(qa('  pmsm (Model Perf):     '+totalRaPmsm+(totalRaPmsm===centralR?' ✓':' ⚠ MISMATCH')));
+        console.log(qa('  univ (Pivot):          '+totalRaUniv+(totalRaUniv===centralR?' ✓':' ⚠ MISMATCH')));
+        console.log(qa('KONARC CHECK'));
+        console.log(qa('  SR2 in retail:         '+konarcSR2+(konarcSR2?' ⚠ FAIL':'  ✓ PASS')));
+        console.log(qa('  SR3 in retail:         '+konarcSR3+(konarcSR3?' ⚠ FAIL':'  ✓ PASS')));
+        const overallPass=tabMatch&&stateOk&&konarcOk&&missingMonthOk;
+        console.log(qa(''));
+        console.log(qa('OVERALL RESULT: '+(overallPass?'✅ PASS':'❌ FAIL')));
+        if(!tabMatch)console.log(qa('  ⚠ Tab reconciliation FAILED — matrices do not match central retail count'));
+        if(!stateOk)console.log(qa('  ⚠ State pipeline FAILED — all joined rows have Unknown/blank state'));
+        if(!konarcOk)console.log(qa('  ⚠ KONARC leak DETECTED — SR2='+konarcSR2+' SR3='+konarcSR3));
+        if(!missingMonthOk)console.log(qa('  ⚠ '+bookedMissingMonths.length+' booked rows missing booking_month or lead_month'));
+        console.groupEnd();
+
+        // Store for DevTools access
+        window.__ATHER_QA__={
+          joined,finalRetail,centralR,
+          tabSums:{sm:totalRaSm,stm:totalRaStm,ltm:totalRaLtm,pmsm:totalRaPmsm,univ:totalRaUniv},
+          stateOk,konarcOk,tabMatch,overallPass,
+          stNames,stPayload,dMap,mdlBreak
         };
-      })(joined,ld);
-      // Preview CSV rows (no download) — call window.atherDetailedCsvPreview(n) from DevTools
-      window.atherDetailedCsvPreview=(function(j){
-        return function(n){
-          n=n||20;
-          const rows=[];
-          for(const r of j){
-            const sn=r.statusName||'';
-            const isRA=sn.trim().toLowerCase()==='retail attribution';
-            rows.push({
-              opty_id:r.opty_id,lead_month:r.lead_month,
-              statusName:sn,
-              isRA,
-              purchasedModel:isRA?(r.purchasedModel||''):'',
-              performanceMonth:isRA?(r.booking_month||''):'',
-              callType:isRA?(r.callType||''):'',
-              retailDate:isRA?(r.retailDate?formatRetailDate(r.retailDate):''):'',
-              isBooked:r.isBooked
-            });
-            if(rows.length>=n)break;
-          }
-          console.log('[ATHER FINAL QA] CSV preview (first '+n+' rows):');
-          console.table(rows);
-          const raRows=rows.filter(r=>r.isRA);
-          const nonRARows=rows.filter(r=>!r.isRA);
-          console.log('[ATHER FINAL QA] Of',rows.length,'previewed:',raRows.length,'RA,',nonRARows.length,'non-RA');
-          const leak=nonRARows.filter(r=>r.purchasedModel||r.performanceMonth||r.callType||r.retailDate);
-          console.log('[ATHER FINAL QA] Non-RA rows with retail fields (MUST=0):',leak.length,leak.length?'⚠ LEAK':'✓');
-          const raBlank=raRows.filter(r=>!r.purchasedModel&&!r.performanceMonth);
-          console.log('[ATHER FINAL QA] RA rows missing retail fields:',raBlank.length,raBlank.length?'⚠':'✓');
-          return rows;
-        };
-      })(joined);
-      console.log('[ATHER FINAL QA] window.atherFinalQA() and window.atherDetailedCsvPreview(n) are now available.');
-      // ── end ATHER FINAL QA ──
+      })(leadRaw,retailRaw,joined,payload,leadResult,retailResult);
+      // ── end ATHER COMPREHENSIVE QA ──
       console.groupEnd();
     }catch(e){setSyncErr(e.message);}
     finally{setSyncing(false);}
