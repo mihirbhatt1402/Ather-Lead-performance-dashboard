@@ -3231,7 +3231,7 @@ const StateSourceTab = React.memo(function StateSourceTab({ data, filters, month
       if (!allMdl && (mdf === FILTER_CLEARED || !mdf.has(r.model)))  continue;
       if (!allSt  && (stf === FILTER_CLEARED || !stf.has(r.state)))  continue;
       if (!allCity&& (cf  === FILTER_CLEARED || !cf.has(r.city)))    continue;
-      const region = (r.region || '').trim() || 'Unknown';
+      const region = (r.region || '').trim() || (r.state || '').trim() || 'Unknown';
       const state  = (r.state  || '').trim() || 'Unknown';
       const src    = r.source  || 'Unknown';
       const isR    = isRetailedLead(r);
@@ -3264,7 +3264,7 @@ const StateSourceTab = React.memo(function StateSourceTab({ data, filters, month
       if (!allLT4 && (filters.leadTypes === FILTER_CLEARED || !filters.leadTypes.has(r.lt)))     continue;
       if (!allMd4 && (filters.models    === FILTER_CLEARED || !filters.models.has(r.model)))     continue;
       gNRS++;
-      const region = (r.region || '').trim() || 'Unknown';
+      const region = (r.region || '').trim() || (r.state || '').trim() || 'Unknown';
       const state  = (r.state  || '').trim() || 'Unknown';
       if (!regionMap.has(region)) regionMap.set(region, {l:0,r:0,nr:0,bySrc:new Map(),stateMap:new Map()});
       const reg = regionMap.get(region);
@@ -4662,6 +4662,60 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
           stNames,stPayload,dMap,mdlBreak
         };
       })(leadRaw,retailRaw,joined,payload,leadResult,retailResult);
+
+      // ── [ATHER STATE UI DEBUG] ─────────────────────────────────────────────────
+      (function atherStateUIDebug(j){
+        console.group('[ATHER STATE UI DEBUG] State Performance rendering trace');
+        const total=j.length;
+        const statePop=j.filter(r=>(r.state||'').trim()!==''&&r.state!=='Unknown').length;
+        const stateUnk=total-statePop;
+        const regionPop=j.filter(r=>(r.region||'').trim()!=='').length;
+        const regionEmpty=total-regionPop;
+        const regionUnkAfterFix=j.filter(r=>!(r.region||'').trim()&&!(r.state||'').trim()).length;
+        console.log('[ATHER STATE UI DEBUG] Source rows (rawJoined): '+total);
+        console.log('[ATHER STATE UI DEBUG] Rows with populated state (r.state): '+statePop);
+        console.log('[ATHER STATE UI DEBUG] Rows with unknown/blank state: '+stateUnk);
+        console.log('[ATHER STATE UI DEBUG] Rows with populated r.region: '+regionPop);
+        console.log('[ATHER STATE UI DEBUG] Rows with empty r.region (old bug → "Unknown" region): '+regionEmpty);
+        console.log('[ATHER STATE UI DEBUG] Rows still Unknown after fix (region AND state blank): '+regionUnkAfterFix);
+        console.log('[ATHER STATE UI DEBUG] ── 10 sample records ──');
+        console.log('opty_id | r.state | r.region | region_before_fix | region_after_fix');
+        j.slice(0,10).forEach(r=>{
+          const regionBefore=(r.region||'').trim()||'Unknown';
+          const regionAfter=(r.region||'').trim()||(r.state||'').trim()||'Unknown';
+          console.log(
+            (r.opty_id||'—')+' | actualState="'+(r.state||'')+
+            '" | r.region="'+(r.region||'')+
+            '" | regionBefore="'+regionBefore+
+            '" | regionAfter="'+regionAfter+'"'
+          );
+        });
+        console.groupEnd();
+
+        // ── [ATHER STATE FINAL QA] ──
+        console.group('[ATHER STATE FINAL QA]');
+        const uniqueStates=new Set(j.map(r=>(r.state||'').trim()).filter(s=>s&&s!=='Unknown'));
+        const stateCount=uniqueStates.size;
+        const unknownCount=j.filter(r=>!(r.state||'').trim()||r.state==='Unknown').length;
+        const totalLeads=j.length;
+        const totalRetail=j.filter(r=>isRetailedLead(r)).length;
+        // State Performance will now group by region=state (after fix), so verify state sums
+        const stateLeadMap=new Map();j.forEach(r=>{const s=(r.state||'').trim()||'Unknown';stateLeadMap.set(s,(stateLeadMap.get(s)||0)+1);});
+        const stateRetailMap=new Map();j.filter(r=>isRetailedLead(r)).forEach(r=>{const s=(r.state||'').trim()||'Unknown';stateRetailMap.set(s,(stateRetailMap.get(s)||0)+1);});
+        const spLeadSum=[...stateLeadMap.values()].reduce((a,b)=>a+b,0);
+        const spRetailSum=[...stateRetailMap.values()].reduce((a,b)=>a+b,0);
+        const spLeadMatch=spLeadSum===totalLeads;
+        const spRetailMatch=spRetailSum===totalRetail;
+        console.log('[ATHER STATE FINAL QA] State count: '+stateCount);
+        console.log('[ATHER STATE FINAL QA] Unknown state count: '+unknownCount);
+        console.log('[ATHER STATE FINAL QA] State Performance total Leads: '+spLeadSum+(spLeadMatch?' ✓':' ⚠ MISMATCH'));
+        console.log('[ATHER STATE FINAL QA] State Performance total Retail: '+spRetailSum+(spRetailMatch?' ✓':' ⚠ MISMATCH'));
+        console.log('[ATHER STATE FINAL QA] Central payload Leads: '+totalLeads);
+        console.log('[ATHER STATE FINAL QA] Central payload Retail: '+totalRetail);
+        console.log('[ATHER STATE FINAL QA] State Leads reconciliation: '+(spLeadMatch?'✅ PASS':'❌ FAIL'));
+        console.log('[ATHER STATE FINAL QA] State Retail reconciliation: '+(spRetailMatch?'✅ PASS':'❌ FAIL'));
+        console.groupEnd();
+      })(joined);
       // ── end ATHER COMPREHENSIVE QA ──
       console.groupEnd();
     }catch(e){setSyncErr(e.message);}
