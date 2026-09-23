@@ -1913,7 +1913,7 @@ const DimGrid = React.memo(function DimGrid({
 
   // Header row 1 — top-level group names (sub-groups shown as peers when parent expanded)
   const hdr1 = [
-    ce('th', { key:'dim', className:'left', rowSpan:2, style:{minWidth:160,zIndex:3,background:'#1D4ED8',color:'#fff'} }, dimLabel),
+    ce('th', { key:'dim', className:'left', rowSpan:2, style:{minWidth:160,left:0,position:'sticky',zIndex:4,background:'#1D4ED8',color:'#fff'} }, dimLabel),
     ce('th', { key:'tot', colSpan:5, style:{background:'#1D4ED8',color:'#fff'} }, 'TOTAL'),
     ...(viewerMode ? [] : visibleCols.map(col => {
       const hasChildren = !col.isChild && col.subGroups && col.subGroups.filter(sg=>sg.srcs.length>0).length > 1;
@@ -1936,7 +1936,7 @@ const DimGrid = React.memo(function DimGrid({
 
   // Header row 2 — LEADS | L.CONTRIB% | RETAIL | R.CONTRIB% | L2R% per visible col
   const hdr2 = [
-    ...(noGroupHeaders ? [ce('th', { key:'dim', className:'left', style:{minWidth:160,zIndex:3,background:'#1D4ED8',color:'#fff'} }, dimLabel)] : []),
+    ...(noGroupHeaders ? [ce('th', { key:'dim', className:'left', style:{minWidth:160,left:0,position:'sticky',zIndex:4,background:'#1D4ED8',color:'#fff'} }, dimLabel)] : []),
     ce('th', { key:'tl', className:'sub' }, 'Leads'),
     ce('th', { key:'tlc', className:'sub' }, 'L.Contrib%'),
     ce('th', { key:'tr', className:'sub' }, 'Retail'),
