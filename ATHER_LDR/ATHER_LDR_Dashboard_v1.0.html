@@ -2921,15 +2921,11 @@ const GeoAndDealerTab = React.memo(function GeoAndDealerTab({ data, filters, mon
       const region = r.region     || 'Unknown';
       const key = dealer + '\x00' + state + '\x00' + region;
       let e = acc.get(key);
-      if (!e) { e = { dealer, state, region, city:r.city||'', oemCrmId:r.oemCrmId||'', leads:0, retail:0, wip:0, dp:0, l1:0, lost:0 }; acc.set(key, e); }
+      if (!e) { e = { dealer, state, region, city:r.city||'', oemCrmId:r.oemCrmId||'', leads:0, retail:0, lost:0 }; acc.set(key, e); }
       e.leads++;
       const isR = isRetailedLead(r);
       const purOk = allPurMdl || !isR || pmf.has(canonPurMdl(r.purchasedModel||''));
       if (purOk && (RT === 'dms' ? (isR && r.callType === 'dms') : RT === 'co' ? (isR && r.callType === 'co') : isR)) e.retail++;
-      const wid = String(r.webId || '').trim().toLowerCase();
-      if (wid === 'wip') e.wip++;
-      else if (wid === 'direct push') e.dp++;
-      else if (wid === 'l1 nurtured') e.l1++;
       const sn = String(r.statusName || '').trim().toLowerCase();
       if (sn === 'lost not contactable' || sn === 'lost not purchased' || sn === 'lost purchased') e.lost++;
     }
@@ -2964,9 +2960,9 @@ const GeoAndDealerTab = React.memo(function GeoAndDealerTab({ data, filters, mon
   }, [filteredRows, sortCol, sortDir]);
 
   const totals = useMemo(() => {
-    let leads=0, retail=0, wip=0, dp=0, l1=0, lost=0;
-    for (const r of filteredRows) { leads+=r.leads; retail+=r.retail; wip+=r.wip; dp+=r.dp; l1+=r.l1; lost+=r.lost; }
-    return { dealers: filteredRows.length, leads, retail, wip, dp, l1, lost };
+    let leads=0, retail=0, lost=0;
+    for (const r of filteredRows) { leads+=r.leads; retail+=r.retail; lost+=r.lost; }
+    return { dealers: filteredRows.length, leads, retail, lost };
   }, [filteredRows]);
 
   const pct = (r, l) => l > 0 ? (r / l * 100).toFixed(1) + '%' : '—';
@@ -2975,8 +2971,8 @@ const GeoAndDealerTab = React.memo(function GeoAndDealerTab({ data, filters, mon
   const arrow = col => sortCol === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
   const exportCsvGeo = () => {
-    const hdr = ['OEM CRM ID','Dealer','State','Region','City','Leads','Retail','Conv%','WIP','Direct Push','L1 Nurtured','Lost'];
-    const aoa = [hdr, ...sortedRows.map(r => [r.oemCrmId,r.dealer,r.state,r.region,r.city||'',r.leads,r.retail,pct(r.retail,r.leads),r.wip,r.dp,r.l1,r.lost])];
+    const hdr = ['OEM CRM ID','Dealer','State','Region','City','Leads','Retail','Conv%','Lost'];
+    const aoa = [hdr, ...sortedRows.map(r => [r.oemCrmId,r.dealer,r.state,r.region,r.city||'',r.leads,r.retail,pct(r.retail,r.leads),r.lost])];
     const csv = aoa.map(row => row.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n');
     const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob); const a = document.createElement('a');
@@ -2996,9 +2992,6 @@ const GeoAndDealerTab = React.memo(function GeoAndDealerTab({ data, filters, mon
     { label:'Leads',        val: fmt(totals.leads) },
     { label:'Retail',       val: fmt(totals.retail) },
     { label:'Conv%',        val: pct(totals.retail, totals.leads) },
-    { label:'WIP',          val: fmt(totals.wip) },
-    { label:'Direct Push',  val: fmt(totals.dp) },
-    { label:'L1 Nurtured',  val: fmt(totals.l1) },
     { label:'Lost',         val: fmt(totals.lost) },
   ];
 
@@ -3045,13 +3038,12 @@ const GeoAndDealerTab = React.memo(function GeoAndDealerTab({ data, filters, mon
           ce('thead', null,
             ce('tr', null,
               TH('oemCrmId','Dealer Code','left'), TH('dealer','Dealer','left'), TH('state','State','left'), TH('region','Region','left'), TH('city','City','left'),
-              TH('leads','Leads'), TH('retail','Retail'), TH('conv','Conv%'),
-              TH('wip','WIP'), TH('dp','Direct Push'), TH('l1','L1 Nurtured'), TH('lost','Lost')
+              TH('leads','Leads'), TH('retail','Retail'), TH('conv','Conv%'), TH('lost','Lost')
             )
           ),
           ce('tbody', null,
             sortedRows.length === 0
-              ? ce('tr', null, ce('td', { colSpan:12, style:{ textAlign:'center', padding:24, color:'#94a3b8' } }, 'No data for selected filters'))
+              ? ce('tr', null, ce('td', { colSpan:9, style:{ textAlign:'center', padding:24, color:'#94a3b8' } }, 'No data for selected filters'))
               : [
                   ...sortedRows.map((r, i) =>
                     ce('tr', { key: r.dealer+r.state+r.region,
@@ -3064,9 +3056,6 @@ const GeoAndDealerTab = React.memo(function GeoAndDealerTab({ data, filters, mon
                       ce('td',{style:{padding:'7px 10px',textAlign:'center',fontWeight:600}},fmt(r.leads)),
                       ce('td',{style:{padding:'7px 10px',textAlign:'center',fontWeight:600}},fmt(r.retail)),
                       ce('td',{style:{padding:'7px 10px',textAlign:'center',color:'#059669'}},pct(r.retail,r.leads)),
-                      ce('td',{style:{padding:'7px 10px',textAlign:'center'}},fmt(r.wip)),
-                      ce('td',{style:{padding:'7px 10px',textAlign:'center'}},fmt(r.dp)),
-                      ce('td',{style:{padding:'7px 10px',textAlign:'center'}},fmt(r.l1)),
                       ce('td',{style:{padding:'7px 10px',textAlign:'center'}},fmt(r.lost))
                     )
                   ),
@@ -3075,9 +3064,6 @@ const GeoAndDealerTab = React.memo(function GeoAndDealerTab({ data, filters, mon
                     ce('td',{style:{padding:'8px 10px',textAlign:'center'}},fmt(totals.leads)),
                     ce('td',{style:{padding:'8px 10px',textAlign:'center'}},fmt(totals.retail)),
                     ce('td',{style:{padding:'8px 10px',textAlign:'center'}},pct(totals.retail,totals.leads)),
-                    ce('td',{style:{padding:'8px 10px',textAlign:'center'}},fmt(totals.wip)),
-                    ce('td',{style:{padding:'8px 10px',textAlign:'center'}},fmt(totals.dp)),
-                    ce('td',{style:{padding:'8px 10px',textAlign:'center'}},fmt(totals.l1)),
                     ce('td',{style:{padding:'8px 10px',textAlign:'center'}},fmt(totals.lost))
                   )
                 ]
