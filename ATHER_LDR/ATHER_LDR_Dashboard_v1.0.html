@@ -4648,8 +4648,13 @@ var FIREBASE_CONFIG={
   messagingSenderId:'1052090454804',
   appId:'1:1052090454804:web:3f6187e1a418418dec2801',
 };
-var ADMIN_EMAILS=['mihir.bhatt@girnarsoft.com'];
-var ALLOWED_DOMAINS=['@girnarsoft.com','@girnarcare.com'];
+// Exact whitelist — only these three emails may ever receive admin role.
+// DO NOT add domain-based matching; membership must be explicit.
+var ADMIN_EMAILS=[
+  'pooja.chowdhury@girnarsoft.com',
+  'mihir.bhatt@girnarsoft.com',
+  'aditya.kumar@girnarsoft.com'
+];
 var USERS_COL='ather_users';
 var PRESENCE_PATH='ather_presence';
 
@@ -4668,7 +4673,16 @@ function getFbRTDB(){
   catch(e){console.warn('[ATHER AUTH] Realtime Database not configured — presence disabled');return null;}
 }
 
-function isAdminEmail(email){return ADMIN_EMAILS.includes((email||'').toLowerCase());}
+function isAdminEmail(email){return ADMIN_EMAILS.includes((email||'').toLowerCase().trim());}
+
+// Central role resolver — enforces admin whitelist regardless of Firestore value.
+// Non-whitelisted emails can NEVER receive 'admin' even if their Firestore doc says so.
+function resolveAtherRole(user,firestoreRole){
+  if(isAdminEmail(user.email))return 'admin';
+  var r=(firestoreRole||'').toLowerCase().trim();
+  return(['viewer','full','client','pending'].includes(r))?r:'pending';
+}
+
 function ensureUserDoc(user){
   var ref=getFbDb().collection(USERS_COL).doc(user.uid);
   var isAdmin=isAdminEmail(user.email);
@@ -4819,7 +4833,7 @@ function AdminPanel({onClose}){
                     ?ce('span',{style:{fontSize:11,color:'#9ca3af'}},'Saving\u2026')
                     :ce('select',{value:u.role||'pending',onChange:function(e){changeRole(u.id,e.target.value);},
                         style:{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #d1d5db',cursor:'pointer',background:'#fff',fontFamily:'inherit'}},
-                      ['pending','viewer','full','admin','client'].map(function(r){
+                      ['pending','viewer','full','client'].map(function(r){
                         return ce('option',{key:r,value:r},r.charAt(0).toUpperCase()+r.slice(1));
                       })
                     )
@@ -4872,14 +4886,17 @@ function AuthGate(){
       var unsubRole=getFbDb().collection(USERS_COL).doc(user.uid).onSnapshot(
         function(snap){
           if(mounted){
-            var r=(snap.data()||{}).role||'pending';
+            var r=resolveAtherRole(user,(snap.data()||{}).role||'pending');
             setRole(r);setAuthState(r==='pending'?'pending':'authed');
           }
         },
         function(e){
+          // Firestore error (e.g. permission-denied): do NOT grant dashboard access.
+          // Admin-whitelisted emails get 'admin'; all others stay at 'pending'.
+          console.error('[ATHER AUTH] Role snapshot error:',e.code||e.message);
           if(mounted){
-            var fallbackRole=isAdminEmail(user.email)?'admin':'full';
-            setRole(fallbackRole);setAuthState('authed');
+            if(isAdminEmail(user.email)){setRole('admin');setAuthState('authed');}
+            // else: stay in pending state — no dashboard access on Firestore error
           }
         }
       );
