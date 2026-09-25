@@ -2995,7 +2995,7 @@ const GeoAndDealerTab = React.memo(function GeoAndDealerTab({ data, filters, mon
     { label:'Lost',         val: fmt(totals.lost) },
   ];
 
-  return ce('div', { style:{ maxWidth:1440, margin:'0 auto', padding:'16px 16px' } },
+  return ce('div', { style:{ width:'100%', padding:'16px 16px' } },
     ce('div', { style:{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' } },
       kpis.map(({ label, val }) =>
         ce('div', { key:label, className:'card', style:{ padding:'10px 14px', minWidth:88, textAlign:'center', flex:'1 1 80px' } },
@@ -4554,7 +4554,7 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
   return ce('div',{style:{minHeight:'100vh',background:'#f8fafc'}},
     /* Header */
     ce('div',{style:{background:'#164E63',padding:'0 24px',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 16px rgba(6,182,212,.20)'}},
-      ce('div',{style:{maxWidth:1440,margin:'0 auto',display:'flex',alignItems:'center',gap:16}},
+      ce('div',{style:{width:'100%',display:'flex',alignItems:'center',gap:16}},
         ce('div',{style:{display:'flex',alignItems:'center',gap:10,padding:'10px 0',flexShrink:0}},
           ce('div',{style:{width:34,height:34,borderRadius:8,background:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:900,color:'#0891B2',boxShadow:'0 2px 8px rgba(0,0,0,.15)'}},'A'),
           ce('div',null,
@@ -4608,17 +4608,17 @@ function App({fbUser,role,presence,onSignOut,onAdminOpen}){
     diagnostics&&ce(StateRetailPanel,{d:diagnostics}),
     /* Tab nav */
     ce('div',{style:{background:'#fff',borderBottom:'2px solid #A5F3FC',position:'sticky',top:54,zIndex:99,boxShadow:'0 2px 8px rgba(124,45,18,.08)'}},
-      ce('div',{style:{maxWidth:1440,margin:'0 auto',display:'flex',alignItems:'center',gap:0,padding:'0 24px',opacity:isPending?0.6:1,transition:'opacity .15s'}},
+      ce('div',{style:{width:'100%',display:'flex',alignItems:'center',gap:0,padding:'0 24px',opacity:isPending?0.6:1,transition:'opacity .15s'}},
         visibleTabs.map(t=>ce('button',{key:t.id,className:'tab-pill'+(tab===t.id?' active':''),onClick:()=>startT(()=>setTab(t.id))},t.label)),
         isPending&&ce('span',{style:{marginLeft:12,fontSize:12,color:'#6B7280'}},'Loading\u2026')
       )
     ),
     /* Filter bar */
-    ce('div',{style:{maxWidth:1440,margin:'0 auto',padding:'14px 24px 0',opacity:isPending?0.6:1,transition:'opacity .15s'}},
+    ce('div',{style:{width:'100%',padding:'14px 24px 0',opacity:isPending?0.6:1,transition:'opacity .15s'}},
       ce(FilterBar,{data:effectiveData,filters,onFiltersChange:f=>startT(()=>setFilters(f)),RT,setRT,viewerMode:viewerMode||clientMode,clientMode})
     ),
     /* Tab content */
-    ce('div',{style:{maxWidth:1440,margin:'0 auto',padding:'14px 24px 32px'}},
+    ce('div',{style:{width:'100%',padding:'14px 24px 32px'}},
       tabContent
     )
   );
